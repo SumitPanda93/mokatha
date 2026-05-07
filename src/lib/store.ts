@@ -698,8 +698,8 @@ export async function addComment(postId: string, body: string): Promise<Comment>
   if (post?.author_id) {
     insertNotif("comment", me, postId, post.author_id, `commented: "${body.slice(0, 60)}"`);
   }
-  const { data: post } = await supabase.from("posts").select("comments").eq("id", postId).maybeSingle();
-  await supabase.from("posts").update({ comments: (post?.comments ?? 0) + 1 }).eq("id", postId);
+  const { data: postRow } = await supabase.from("posts").select("comments").eq("id", postId).maybeSingle();
+  await supabase.from("posts").update({ comments: (postRow?.comments ?? 0) + 1 }).eq("id", postId);
   return mapComment(row);
 }
 
