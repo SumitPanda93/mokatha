@@ -1434,7 +1434,7 @@ export function useUpdatePost() {
     mutationFn: async (vars: { postId: string; patch: Parameters<typeof updatePost>[1] }) => updatePost(vars.postId, vars.patch),
     onSuccess: (_d, vars) => {
       qc.invalidateQueries({ queryKey: QK.post(vars.postId) });
-      qc.invalidateQueries({ queryKey: QK.feed() });
+      qc.invalidateQueries({ queryKey: QK.posts });
       toast.success("Post updated");
     },
     onError: (e: any) => toast.error(e.message ?? "Could not update post"),
@@ -1445,7 +1445,7 @@ export function useDeletePost() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (postId: string) => deletePost(postId),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: QK.feed() }); toast.success("Post deleted"); },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: QK.posts }); toast.success("Post deleted"); },
     onError: (e: any) => toast.error(e.message ?? "Could not delete post"),
   });
 }

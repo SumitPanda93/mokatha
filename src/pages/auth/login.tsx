@@ -150,13 +150,6 @@ export default function Login() {
                   Continue with Phone
                 </button>
 
-                {/* Divider */}
-                <div className="flex items-center gap-3 py-1">
-                  <div className="flex-1 h-px bg-white/10" />
-                  <span className="text-[11px] text-[#F5F3EF]/30 font-['Inter']">or</span>
-                  <div className="flex-1 h-px bg-white/10" />
-                </div>
-
               </>
             )}
 

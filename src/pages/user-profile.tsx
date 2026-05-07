@@ -6,7 +6,7 @@ import { useTitle } from "@/hooks/useTitle";
 import {
   useUserByHandle, useFollow, usePostsByAuthor, useIsFollowing, getCurrentUserId,
   useAuthorPlan, useSubscribersOf, useIsSubscribedTo, useSubscribeToAuthor,
-  useUnsubscribeFromAuthor, useWalletBalance,
+  useUnsubscribeFromAuthor, useWalletBalance, getOrCreateConversationId,
 } from "@/lib/store";
 
 export default function UserProfile() {
@@ -16,6 +16,7 @@ export default function UserProfile() {
   const { data: user } = useUserByHandle(handle);
   const [tab, setTab] = useState<"posts" | "tipped" | "saved">("posts");
   const [subSheet, setSubSheet] = useState(false);
+  const [msgLoading, setMsgLoading] = useState(false);
   const follow = useFollow();
   const subscribe = useSubscribeToAuthor();
   const unsubscribe = useUnsubscribeFromAuthor();
@@ -84,9 +85,21 @@ export default function UserProfile() {
               className={`flex-1 py-3 rounded-xl text-[13px] transition-colors ${following ? "bg-card border border-border" : "bg-foreground text-background"}`}>
               {following ? "Following" : "Follow"}
             </motion.button>
-            <button onClick={() => setLocation("/messages")}
-              className="flex-1 py-3 rounded-xl border border-border text-[13px] hover:bg-card transition-colors">
-              Message
+            <button
+              disabled={msgLoading || !me}
+              onClick={async () => {
+                if (!me) { setLocation("/auth/login"); return; }
+                setMsgLoading(true);
+                try {
+                  const convId = await getOrCreateConversationId(me, user.id);
+                  setLocation(`/messages?open=${convId}`);
+                } finally {
+                  setMsgLoading(false);
+                }
+              }}
+              className="flex-1 py-3 rounded-xl border border-border text-[13px] hover:bg-card transition-colors disabled:opacity-50"
+            >
+              {msgLoading ? "…" : "Message"}
             </button>
           </div>
         )}

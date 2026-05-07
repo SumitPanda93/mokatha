@@ -7,6 +7,7 @@ import {
   getCurrentUserId, Post, useAuthorPlan, useSubscribersOf, useInkReward,
   useFollowers, useFollowing, usePostsRealtime,
 } from "@/lib/store";
+import { useAuthState } from "@/lib/auth";
 
 const BADGE_LABELS: Record<string, string> = {
   "supporter": "💛 Supporter",
@@ -17,6 +18,7 @@ const BADGE_LABELS: Record<string, string> = {
 export default function Profile() {
   useTitle("Profile");
   const [, setLocation] = useLocation();
+  const { ready } = useAuthState();
   const { data: user } = useCurrentUser();
   const meId = getCurrentUserId() ?? "u1";
   const { data: posts = [] } = usePostsByAuthor(meId);
@@ -30,11 +32,38 @@ export default function Profile() {
   const [tab, setTab] = useState<"posts" | "saved">("posts");
   usePostsRealtime();
 
+  // Still resolving auth — show spinner to avoid flash
+  if (!ready) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="w-8 h-8 rounded-full border-2 border-terracotta border-t-transparent animate-spin" />
+      </div>
+    );
+  }
+
   if (!user) {
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center gap-4 bg-background px-8 text-center">
-        <div className="font-['Playfair_Display'] text-[28px] text-foreground">Sign in to see your profile</div>
-        <button onClick={() => setLocation("/auth/login")} className="px-8 py-3 rounded-full bg-foreground text-background text-[14px]">Sign in</button>
+      <div className="min-h-screen flex flex-col bg-background">
+        {/* Keep the header consistent with the rest of the app */}
+        <div className="px-5 py-4 flex items-center justify-between border-b border-border">
+          <div className="font-['Playfair_Display'] text-[18px]">Profile</div>
+          <div className="w-9 h-9" />
+        </div>
+        <div className="flex-1 flex flex-col items-center justify-center gap-5 px-8 text-center pb-24">
+          <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center">
+            <Settings size={26} className="text-muted-foreground" />
+          </div>
+          <div>
+            <div className="font-['Playfair_Display'] text-[24px] text-foreground mb-2">Your profile awaits</div>
+            <div className="text-[13px] text-muted-foreground leading-relaxed">Sign in to manage your stories,<br />track earnings and Ink Points.</div>
+          </div>
+          <button
+            onClick={() => setLocation("/auth/login")}
+            className="px-10 py-3.5 rounded-full bg-foreground text-background text-[14px] font-['Inter'] font-medium"
+          >
+            Sign in
+          </button>
+        </div>
       </div>
     );
   }

@@ -1,11 +1,11 @@
 import { useState, useRef, useEffect } from "react";
-import { useLocation, useParams } from "wouter";
+import { useLocation, useSearch } from "wouter";
 import { ArrowLeft, Send, Search } from "lucide-react";
 import { motion } from "framer-motion";
 import { useTitle } from "@/hooks/useTitle";
 import {
   useConversations, useConversationMessages, useSendMessage, useUser,
-  getCurrentUserId, getOrCreateConversationId, Conversation,
+  getCurrentUserId, Conversation,
   supabase, QK,
 } from "@/lib/store";
 import { useQueryClient } from "@tanstack/react-query";
@@ -58,7 +58,7 @@ function ConversationView({ convId, onBack }: { convId: string; onBack: () => vo
   useEffect(() => {
     const channel = supabase
       .channel(`realtime:messages:${convId}`)
-      .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages", filter: `conversationId=eq.${convId}` }, () => {
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages", filter: `conversation_id=eq.${convId}` }, () => {
         qc.invalidateQueries({ queryKey: QK.messages(convId) });
         qc.invalidateQueries({ queryKey: ["conversations"] });
       })
@@ -134,9 +134,13 @@ function ConversationView({ convId, onBack }: { convId: string; onBack: () => vo
 export default function Messages() {
   useTitle("Messages");
   const [, setLocation] = useLocation();
+  const search_ = useSearch();
   const me = getCurrentUserId() ?? "";
   const { data: convs = [] } = useConversations(me);
-  const [activeConvId, setActiveConvId] = useState<string | null>(null);
+
+  // Open a specific conversation if ?open=<convId> is in the URL
+  const openParam = new URLSearchParams(search_).get("open");
+  const [activeConvId, setActiveConvId] = useState<string | null>(openParam ?? null);
   const [search, setSearch] = useState("");
 
   const filtered = convs;
