@@ -93,7 +93,9 @@ export type Transaction = {
   note?: string;
 };
 
-export type NotificationKind = "reaction" | "follow" | "tip" | "mention" | "mehfil-start";
+export type NotificationKind =
+  | "reaction" | "follow" | "tip" | "mention" | "mehfil-start"
+  | "comment" | "like" | "message" | "withdrawal-approved";
 
 export type Notification = {
   id: string;
@@ -279,6 +281,28 @@ function mapNotification(n: any): Notification {
     createdAt: n.created_at,
     read: n.read ?? false,
   };
+}
+
+/** Fire-and-forget notification insert. Never throws — only logs on failure. */
+async function insertNotif(
+  kind: NotificationKind,
+  actorId: string,
+  targetId: string,
+  recipientId: string,
+  body: string,
+): Promise<void> {
+  if (!actorId || !recipientId || actorId === recipientId) return; // never self-notify
+  const { error } = await supabase.from("notifications").insert({
+    id: `n${uid()}`,
+    kind,
+    actor_id: actorId,
+    target_id: targetId,
+    recipient_id: recipientId,
+    body,
+    created_at: new Date().toISOString(),
+    read: false,
+  });
+  if (error) console.warn("[mk:notif] insert failed", error.message);
 }
 
 function mapReport(r: any): Report {
@@ -647,7 +671,7 @@ export async function likePost(postId: string): Promise<void> {
   const me = getCurrentUserId();
   if (!me) throw new Error("not_authenticated");
   const { data: existing } = await supabase.from("post_likes").select("post_id").eq("user_id", me).eq("post_id", postId).maybeSingle();
-  const { data: post } = await supabase.from("posts").select("likes").eq("id", postId).maybeSingle();
+  const { data: post } = await supabase.from("posts").select("likes,author_id,title").eq("id", postId).maybeSingle();
   const current = post?.likes ?? 0;
   if (existing) {
     await supabase.from("post_likes").delete().eq("user_id", me).eq("post_id", postId);
@@ -657,6 +681,10 @@ export async function likePost(postId: string): Promise<void> {
       supabase.from("post_likes").insert({ user_id: me, post_id: postId }),
       supabase.from("posts").update({ likes: current + 1 }).eq("id", postId),
     ]);
+    // Notify author (fire-and-forget)
+    if (post?.author_id) {
+      insertNotif("like", me, postId, post.author_id, `liked "${post.title ?? "your post"}"`);
+    }
   }
 }
 
@@ -665,7 +693,11 @@ export async function addComment(postId: string, body: string): Promise<Comment>
   if (!me) throw new Error("not_authenticated");
   const now = new Date().toISOString();
   const row = { id: `c${uid()}`, post_id: postId, author_id: me, body, created_at: now, likes: 0 };
+  const { data: post } = await supabase.from("posts").select("author_id,title").eq("id", postId).maybeSingle();
   await supabase.from("comments").insert(row);
+  if (post?.author_id) {
+    insertNotif("comment", me, postId, post.author_id, `commented: "${body.slice(0, 60)}"`);
+  }
   const { data: post } = await supabase.from("posts").select("comments").eq("id", postId).maybeSingle();
   await supabase.from("posts").update({ comments: (post?.comments ?? 0) + 1 }).eq("id", postId);
   return mapComment(row);
@@ -820,6 +852,8 @@ export async function approveWithdrawal(requestId: string): Promise<void> {
     supabase.from("transactions").insert({ id: `tx${uid()}`, user_id: req.user_id, kind: "withdraw", amount: req.amount, status: "completed", created_at: now, note: `${req.method} withdrawal` }),
     supabase.from("admin_logs").insert({ id: `al${uid()}`, actor_id: me, action: "approved_withdrawal", target: requestId, created_at: now }),
   ]);
+  // Notify creator their payout was approved
+  insertNotif("withdrawal-approved", me, requestId, req.user_id, `Your withdrawal of ₹${req.amount.toLocaleString()} was approved`);
 }
 
 export async function rejectWithdrawal(requestId: string, reason = ""): Promise<void> {
@@ -1116,13 +1150,33 @@ export async function registerUserWithAuth(displayName: string, language: "or" |
 
 export async function sendMessage(conversationId: string, body: string): Promise<Message> {
   const me = getCurrentUserId();
+  if (!me) throw new Error("not_authenticated");
   const now = new Date().toISOString();
   const row = { id: `msg${uid()}`, conversation_id: conversationId, sender_id: me, body, created_at: now };
+  // Fetch conversation to find the other participant
+  const { data: conv } = await supabase.from("conversations").select("participant_ids").eq("id", conversationId).maybeSingle();
+  const otherId: string | undefined = conv?.participant_ids?.find((id: string) => id !== me);
   await Promise.all([
     supabase.from("messages").insert(row),
     supabase.from("conversations").update({ last_message_at: now }).eq("id", conversationId),
   ]);
+  if (otherId) {
+    // Remove previous unread message notification from this sender to avoid spam
+    await supabase.from("notifications")
+      .delete()
+      .eq("kind", "message")
+      .eq("actor_id", me)
+      .eq("recipient_id", otherId)
+      .eq("read", false);
+    insertNotif("message", me, conversationId, otherId, body.slice(0, 80));
+  }
   return mapMessage(row);
+}
+
+export async function markNotificationRead(id: string): Promise<void> {
+  const me = getCurrentUserId();
+  if (!me) return;
+  await supabase.from("notifications").update({ read: true }).eq("id", id).eq("recipient_id", me);
 }
 
 export async function markAllNotificationsRead(): Promise<void> {
@@ -1352,6 +1406,10 @@ export const useTransactions = (id?: string) => {
   return useQ(QK.transactions(userId), () => getTransactionsForUser(userId));
 };
 export const useNotifications = () => useQ(QK.notifications, getNotifications);
+// Lightweight unread count — key is a child of QK.notifications so it gets
+// invalidated for free whenever the realtime hook invalidates QK.notifications.
+export const useUnreadCount = () =>
+  useQuery({ queryKey: [...QK.notifications, "count"], queryFn: getUnreadCount, staleTime: 15_000 });
 export const useReports = () => useQ(QK.reports, getReports);
 export const useAdminLogs = () => useQ(QK.adminLogs, getAdminLogs);
 export const useTopCreators = (_limit?: number) => {
@@ -1485,6 +1543,14 @@ export function useRejectWithdrawal() {
     mutationFn: (vars: { requestId: string; reason?: string }) => rejectWithdrawal(vars.requestId, vars.reason),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["withdrawal_requests"] }); toast.success("Request rejected"); },
     onError: (e: any) => toast.error(e.message ?? "Rejection failed"),
+  });
+}
+
+export function useMarkNotificationRead() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => markNotificationRead(id),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: QK.notifications }); },
   });
 }
 

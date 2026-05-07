@@ -1,12 +1,12 @@
 import { useState } from "react";
 import { Link, useLocation } from "wouter";
-import { Search, Heart, MessageCircle, Bookmark, Play, Mic, Lock, Zap } from "lucide-react";
+import { Search, Heart, MessageCircle, Bookmark, Play, Mic, Lock, Zap, Bell } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useTitle } from "@/hooks/useTitle";
 import {
   useFeed, useCurrentUser, useMehfils, useLike, useTip, useUser, useSavePost,
   getCurrentUserId, Post, useIsPostUnlocked, useInkReward,
-  usePostsRealtime, useMehfilRealtime,
+  usePostsRealtime, useMehfilRealtime, useUnreadCount, useNotificationsRealtime,
 } from "@/lib/store";
 import { useQueryClient } from "@tanstack/react-query";
 
@@ -38,6 +38,8 @@ export default function Home() {
   const liveMehfil = mehfils.find((m) => m.isLive);
   usePostsRealtime();
   useMehfilRealtime();
+  useNotificationsRealtime();
+  const { data: unreadCount = 0 } = useUnreadCount();
 
   const filtered = posts.filter((p) => {
     if (filter === "For you") return true;
@@ -74,6 +76,14 @@ export default function Home() {
         <div className="flex items-center gap-2">
           <Link href="/rewards" className="w-9 h-9 rounded-full bg-background border border-border flex items-center justify-center hover:bg-ochre/10 hover:border-ochre transition-colors relative">
             <Zap strokeWidth={1.75} size={16} className="text-ochre" />
+          </Link>
+          <Link href="/notifications" className="w-9 h-9 rounded-full bg-background border border-border flex items-center justify-center hover:bg-black/5 relative">
+            <Bell strokeWidth={1.75} size={16} className={unreadCount > 0 ? "text-terracotta" : ""} />
+            {unreadCount > 0 && (
+              <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-[3px] rounded-full bg-terracotta text-white text-[9px] font-bold font-['Inter'] flex items-center justify-center leading-none">
+                {unreadCount > 99 ? "99+" : unreadCount}
+              </span>
+            )}
           </Link>
           <Link href="/search" className="w-9 h-9 rounded-full bg-background border border-border flex items-center justify-center hover:bg-black/5">
             <Search strokeWidth={1.75} size={16} />
