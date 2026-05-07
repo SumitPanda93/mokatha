@@ -68,6 +68,7 @@ export type Mehfil = {
   coverUrl: string;
   language: "or" | "hi";
   tags: string[];
+  archived?: boolean;
 };
 
 export type Tip = {
@@ -254,6 +255,7 @@ function mapMehfil(m: any): Mehfil {
     coverUrl: m.cover_url ?? "",
     language: m.language ?? "or",
     tags: m.tags ?? [],
+    archived: m.archived ?? false,
   };
 }
 
@@ -1601,6 +1603,33 @@ export function useEndMehfil() {
   return useMutation({
     mutationFn: async (id: string) => endMehfil(id),
     onSuccess: () => { qc.invalidateQueries(); toast.success("Mehfil ended"); },
+  });
+}
+
+export async function deleteMehfil(id: string): Promise<void> {
+  await supabase.from("mehfils").delete().eq("id", id);
+}
+
+export async function archiveMehfil(id: string, archived: boolean): Promise<void> {
+  // archived column added by migration 008; falls back to no-op if column absent
+  await supabase.from("mehfils").update({ is_live: false, archived } as Record<string, unknown>).eq("id", id);
+}
+
+export function useDeleteMehfil() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => deleteMehfil(id),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["mehfils"] }); toast.success("Mehfil deleted"); },
+    onError: (e: Error) => toast.error(e.message),
+  });
+}
+
+export function useArchiveMehfil() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, archived }: { id: string; archived: boolean }) => archiveMehfil(id, archived),
+    onSuccess: (_d, v) => { qc.invalidateQueries({ queryKey: ["mehfils"] }); toast.success(v.archived ? "Mehfil archived" : "Mehfil restored"); },
+    onError: (e: Error) => toast.error(e.message),
   });
 }
 
