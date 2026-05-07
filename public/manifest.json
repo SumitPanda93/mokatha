@@ -1,0 +1,13 @@
+{
+  "name": "Mo Katha",
+  "short_name": "Mo Katha",
+  "description": "A quiet salon for Odia voice, poetry, and storytelling.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#F5F3EF",
+  "theme_color": "#F76A4A",
+  "orientation": "portrait",
+  "icons": [
+    { "src": "/favicon.svg", "type": "image/svg+xml", "sizes": "any", "purpose": "any maskable" }
+  ]
+}
