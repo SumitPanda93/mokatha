@@ -1,7 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useParams, useLocation } from "wouter";
-import { motion } from "framer-motion";
-import { ArrowLeft, Heart, MessageCircle, Share2, Play, Pause, Send, MoreHorizontal, Lock, Star, Zap, Edit2, Trash2, Eye, EyeOff } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
+import {
+  ArrowLeft, Heart, MessageCircle, Share2, Play, Pause, Send,
+  MoreHorizontal, Lock, Star, Zap, Edit2, Trash2, Eye, EyeOff,
+  BookOpen, X, ChevronUp,
+} from "lucide-react";
 import { useTitle } from "@/hooks/useTitle";
 import {
   usePost, useComments, useUser, useLike, useAddComment, useTip, useFeed,
@@ -9,10 +13,121 @@ import {
   useIsSubscribedTo, useAuthorPlan, useInkReward, useEarnInkPoints,
   useUpdatePost, useDeletePost,
 } from "@/lib/store";
+import { useAudioPlayer } from "@/lib/audioContext";
 import { toast } from "sonner";
 import PaymentModal from "@/components/PaymentModal";
 
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
 const fmt = (s = 0) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+
+/** Ambient gradient by content kind — used as cover fallback */
+function kindGradient(kind: string): string {
+  switch (kind) {
+    case "voice": return "linear-gradient(135deg, #1C0F06 0%, #2E1A0C 40%, #1A0D18 100%)";
+    case "story": return "linear-gradient(135deg, #1A0A14 0%, #2A1528 40%, #180D20 100%)";
+    case "reel":  return "linear-gradient(135deg, #0E0717 0%, #1A0F2E 50%, #0E1720 100%)";
+    case "text":  return "linear-gradient(135deg, hsl(var(--ochre)/0.12), hsl(var(--plum)/0.12))";
+    default:      return "linear-gradient(135deg, #1a1a1a, #2a2a2a)";
+  }
+}
+
+// ─── Reading Mode ─────────────────────────────────────────────────────────────
+
+function ReadingMode({ post, author, onClose }: { post: any; author: any; onClose: () => void }) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [progress, setProgress] = useState(0);
+
+  const onScroll = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const pct = el.scrollTop / Math.max(el.scrollHeight - el.clientHeight, 1);
+    setProgress(Math.min(pct * 100, 100));
+  };
+
+  return (
+    <motion.div
+      initial={{ y: "100%", opacity: 0 }}
+      animate={{ y: 0, opacity: 1 }}
+      exit={{ y: "100%", opacity: 0 }}
+      transition={{ type: "spring", damping: 30, stiffness: 280 }}
+      className="fixed inset-0 z-[60] flex flex-col"
+      style={{ background: post.kind === "story" ? "#F9F5EF" : "#FAFAF8" }}
+    >
+      {/* Reading progress bar */}
+      <div className="fixed top-0 left-0 right-0 h-[2px] z-10">
+        <div className="h-full bg-terracotta transition-all duration-150" style={{ width: `${progress}%` }} />
+      </div>
+
+      {/* Top bar */}
+      <div className="flex items-center justify-between px-5 pt-4 pb-3 bg-inherit z-10">
+        <button onClick={onClose}
+          className="w-9 h-9 rounded-full border border-border/60 flex items-center justify-center text-foreground/60 hover:text-foreground transition-colors">
+          <ChevronUp size={16} />
+        </button>
+        <div className="text-[10px] font-['Inter'] tracking-[0.22em] uppercase text-muted-foreground">
+          {post.kind === "story" ? "Story" : "Reading"}
+        </div>
+        <button onClick={onClose}
+          className="w-9 h-9 rounded-full border border-border/60 flex items-center justify-center text-foreground/60 hover:text-foreground transition-colors">
+          <X size={15} />
+        </button>
+      </div>
+
+      {/* Scrollable reading content */}
+      <div ref={scrollRef} onScroll={onScroll} className="flex-1 overflow-y-auto px-6 pb-16">
+        {/* Story decoration */}
+        {post.kind === "story" && (
+          <div className="text-[60px] font-['Playfair_Display'] leading-none text-foreground/12 mb-0 -mb-4 select-none" aria-hidden>
+            "
+          </div>
+        )}
+
+        {/* Title */}
+        <h1 className="font-['Playfair_Display'] text-[28px] font-normal leading-[1.25] text-foreground mb-4 mt-2">
+          {post.title}
+        </h1>
+
+        {/* Author */}
+        {author && (
+          <div className="flex items-center gap-2.5 mb-8 pb-6 border-b border-border/40">
+            <img src={author.avatarUrl} alt="" className="w-8 h-8 rounded-full object-cover" />
+            <div>
+              <div className="text-[13px] font-['Inter'] font-medium text-foreground/80">{author.displayName}</div>
+              <div className="text-[11px] text-muted-foreground">@{author.handle}</div>
+            </div>
+          </div>
+        )}
+
+        {/* Body */}
+        <div
+          className="font-['Playfair_Display'] text-[18px] leading-[1.85] text-foreground whitespace-pre-line"
+          style={{ letterSpacing: "0.01em" }}
+        >
+          {post.body}
+        </div>
+
+        {/* End flourish */}
+        <div className="mt-12 flex items-center justify-center gap-3 text-muted-foreground/50">
+          <div className="h-px flex-1 bg-border/50" />
+          <div className="text-[16px]">❧</div>
+          <div className="h-px flex-1 bg-border/50" />
+        </div>
+
+        {/* Tags */}
+        {post.tags?.length > 0 && (
+          <div className="mt-8 flex flex-wrap gap-1.5">
+            {post.tags.map((t: string) => (
+              <span key={t} className="text-[11px] px-3 py-1 rounded-full bg-foreground/5 text-muted-foreground">#{t}</span>
+            ))}
+          </div>
+        )}
+      </div>
+    </motion.div>
+  );
+}
+
+// ─── Locked overlay ───────────────────────────────────────────────────────────
 
 function LockedOverlay({ post, author, onUnlocked }: { post: any; author: any; onUnlocked: () => void }) {
   const unlockTip = useUnlockPostWithTip();
@@ -23,56 +138,36 @@ function LockedOverlay({ post, author, onUnlocked }: { post: any; author: any; o
   const hasPts = (ink?.points ?? 0) >= 50;
   const [, setLocation] = useLocation();
 
-  const doTipUnlock = (amount: number) => {
-    unlockTip.mutate({ postId: post.id, amount }, { onSuccess: (r) => { if (r === "ok") onUnlocked(); } });
-  };
-  const doPtsUnlock = () => {
-    unlockPts.mutate(post.id, { onSuccess: (r) => { if (r === "ok") onUnlocked(); } });
-  };
-
   return (
     <div className="mx-5 mt-6 rounded-2xl border border-border overflow-hidden">
-      {/* Blurred preview of text */}
       <div className="relative p-5">
         <div className="font-['Playfair_Display'] text-[17px] leading-[1.7] text-foreground/80 line-clamp-3 select-none">
           {post.body?.split("\n")[0]}
         </div>
         <div className="absolute inset-0 bg-gradient-to-b from-transparent via-background/60 to-background pointer-events-none" style={{ backdropFilter: "blur(4px)" }} />
       </div>
-
-      {/* Lock CTA */}
       <div className="px-5 pb-5 text-center">
         <div className="w-12 h-12 rounded-2xl bg-foreground/8 border border-border flex items-center justify-center mx-auto mb-3">
           <Lock size={20} className="text-muted-foreground" />
         </div>
-
         {post.accessType === "premium" ? (
           <>
             <div className="font-['Playfair_Display'] text-[18px] mb-1">Subscribers only</div>
             <div className="text-[12px] text-muted-foreground mb-4">Subscribe to {author?.displayName} to read this piece</div>
-            {plan?.enabled ? (
-              <div className="space-y-2">
-                <button onClick={() => setLocation(`/u/${author?.handle}`)}
-                  className="w-full py-3 rounded-xl text-white text-[13px]"
-                  style={{ background: "linear-gradient(90deg, hsl(var(--ochre)), hsl(var(--terracotta)))" }}>
-                  <Star size={13} className="inline mr-1.5" />
-                  Subscribe · ₹{plan.priceMonthly}/month
-                </button>
-              </div>
-            ) : (
-              <button onClick={() => setLocation(`/u/${author?.handle}`)}
-                className="w-full py-3 rounded-xl bg-foreground text-background text-[13px]">
-                View author profile
-              </button>
-            )}
+            <button onClick={() => setLocation(`/u/${author?.handle}`)}
+              className="w-full py-3 rounded-xl text-[13px] text-white"
+              style={{ background: "linear-gradient(90deg, hsl(var(--ochre)), hsl(var(--terracotta)))" }}>
+              <Star size={13} className="inline mr-1.5" />
+              {plan?.enabled ? `Subscribe · ₹${plan.priceMonthly}/month` : "View author profile"}
+            </button>
           </>
         ) : (
           <>
             <div className="font-['Playfair_Display'] text-[18px] mb-1">Tip to read</div>
-            <div className="text-[12px] text-muted-foreground mb-4">Minimum ₹{post.minTip ?? 10} to unlock this piece</div>
+            <div className="text-[12px] text-muted-foreground mb-4">Minimum ₹{post.minTip ?? 10} to unlock</div>
             <div className="grid grid-cols-2 gap-2 mb-3">
               {Array.from(new Set([post.minTip ?? 10, (post.minTip ?? 10) * 2, (post.minTip ?? 10) * 5, 100])).slice(0, 4).map((v: number) => (
-                <button key={v} onClick={() => doTipUnlock(v)}
+                <button key={v} onClick={() => unlockTip.mutate({ postId: post.id, amount: v }, { onSuccess: (r) => { if (r === "ok") onUnlocked(); } })}
                   disabled={unlockTip.isPending}
                   className="py-2.5 rounded-xl border border-ochre text-ochre text-[13px] hover:bg-ochre hover:text-white transition-colors disabled:opacity-50">
                   Tip ₹{v}
@@ -82,7 +177,8 @@ function LockedOverlay({ post, author, onUnlocked }: { post: any; author: any; o
             <div className="flex items-center gap-2 text-[11px] text-muted-foreground mb-3">
               <div className="flex-1 h-px bg-border" />or<div className="flex-1 h-px bg-border" />
             </div>
-            <button onClick={doPtsUnlock} disabled={!hasPts || unlockPts.isPending}
+            <button onClick={() => unlockPts.mutate(post.id, { onSuccess: (r) => { if (r === "ok") onUnlocked(); } })}
+              disabled={!hasPts || unlockPts.isPending}
               className={`w-full py-2.5 rounded-xl text-[13px] border transition-colors ${hasPts ? "border-violet text-violet hover:bg-violet hover:text-white" : "border-border text-muted-foreground opacity-50 cursor-not-allowed"}`}>
               <Zap size={13} className="inline mr-1.5" />
               Use 50 Ink Points {!hasPts && `(you have ${ink?.points ?? 0})`}
@@ -93,6 +189,8 @@ function LockedOverlay({ post, author, onUnlocked }: { post: any; author: any; o
     </div>
   );
 }
+
+// ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function PostDetail() {
   const params = useParams<{ id: string }>();
@@ -106,67 +204,59 @@ export default function PostDetail() {
   const addC = useAddComment(id);
   const tip = useTip("post");
   const earnPts = useEarnInkPoints();
-  const [playing, setPlaying] = useState(false);
+
   const [draft, setDraft] = useState("");
   const [tipOpen, setTipOpen] = useState(false);
   const [stripeTipOpen, setStripeTipOpen] = useState(false);
   const [unlocked, setUnlocked] = useState(false);
   const [ownerMenuOpen, setOwnerMenuOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  useTitle(post?.title ?? "Poem");
+  const [readingMode, setReadingMode] = useState(false);
+
+  useTitle(post?.title ?? "Post");
 
   const me = getCurrentUserId() ?? "";
   const isAuthor = post?.authorId === me;
   useIsSubscribedTo(me, post?.authorId ?? "");
   const { data: remoteUnlocked = false } = useIsPostUnlocked(me, post?.id ?? "");
-
   const locked = post ? !isAuthor && !unlocked && !remoteUnlocked : false;
 
-  const audioRef = useRef<HTMLAudioElement>(null);
-  const [currentTime, setCurrentTime] = useState(0);
-
-  // Wire ended event to reset play state
-  useEffect(() => {
-    const el = audioRef.current;
-    if (!el) return;
-    const onEnded = () => setPlaying(false);
-    const onTimeUpdate = () => setCurrentTime(el.currentTime);
-    el.addEventListener("ended", onEnded);
-    el.addEventListener("timeupdate", onTimeUpdate);
-    return () => {
-      el.removeEventListener("ended", onEnded);
-      el.removeEventListener("timeupdate", onTimeUpdate);
-    };
-  }, [post?.audioUrl]);
+  // ── Global audio player integration ──────────────────────────────────────
+  const audioPlayer = useAudioPlayer();
+  const isCurrentTrack = audioPlayer.track?.postId === id;
+  const playing = isCurrentTrack ? audioPlayer.playing : false;
+  const currentTime = isCurrentTrack ? audioPlayer.currentTime : 0;
+  const progressPct = isCurrentTrack ? audioPlayer.progressPct : 0;
 
   const toggleAudio = () => {
-    const el = audioRef.current;
-    if (!el) return;
-    if (playing) {
-      el.pause();
-      setPlaying(false);
+    if (!post?.audioUrl) return;
+    if (isCurrentTrack) {
+      audioPlayer.toggle();
     } else {
-      el.play().catch(() => {});
-      setPlaying(true);
+      audioPlayer.play({
+        postId: post.id,
+        title: post.title,
+        audioUrl: post.audioUrl,
+        coverUrl: post.coverUrl,
+        authorName: author?.displayName,
+        kind: post.kind as "voice" | "reel",
+        durationSec: post.durationSec,
+      });
     }
   };
-
-  const fmtTime = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
-  const progressPct = post?.durationSec ? Math.min((currentTime / post.durationSec) * 100, 100) : 0;
 
   const updatePost = useUpdatePost();
   const deletePostMut = useDeletePost();
 
   // Earn +5 points when reading a post (once per session)
   useEffect(() => {
-    if (post && me && !isAuthor) {
-      earnPts.mutate({ userId: me, points: 5 });
-    }
+    if (post && me && !isAuthor) earnPts.mutate({ userId: me, points: 5 });
   }, [post?.id]);
 
   if (!post) return <div className="p-10 text-center text-muted-foreground">Loading…</div>;
 
   const isAudio = post.kind === "voice" || post.kind === "reel";
+  const isText = post.kind === "text" || post.kind === "story";
   const related = feed.filter((p) => p.id !== post.id && p.tags.some((t) => post.tags.includes(t))).slice(0, 3);
 
   const ACCESS_BADGE: Record<string, { label: string; cls: string }> = {
@@ -175,37 +265,62 @@ export default function PostDetail() {
     premium: { label: "Premium", cls: "bg-plum text-white" },
   };
   const badge = post.accessType ? ACCESS_BADGE[post.accessType] : null;
-
   const sendTip = (amt: number) => { tip.mutate({ id: post.id, amount: amt }); setTipOpen(false); };
 
   return (
     <div className="min-h-screen w-full flex flex-col bg-background">
       <style>{`
         @keyframes pd-bar { 0%,100% { height: 18%; } 50% { height: 100%; } }
+        @keyframes feed-bar { 0%,100% { height: 20%; } 50% { height: 100%; } }
       `}</style>
-      <div className="px-5 py-3 flex items-center justify-between sticky top-0 z-30 bg-background/85 backdrop-blur-md">
-        <button onClick={() => setLocation("/")} className="w-9 h-9 rounded-full border border-border flex items-center justify-center"><ArrowLeft size={16} /></button>
+
+      {/* ── Nav bar ── */}
+      <div className="px-5 py-3 flex items-center justify-between sticky top-0 z-30 bg-background/90 backdrop-blur-md">
+        <button onClick={() => setLocation("/")} className="w-9 h-9 rounded-full border border-border flex items-center justify-center">
+          <ArrowLeft size={16} />
+        </button>
         <div className="flex items-center gap-2">
           <div className="text-[11px] uppercase tracking-[0.2em] text-muted-foreground">{post.kind}</div>
           {badge && <span className={`text-[9px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider ${badge.cls}`}>{badge.label}</span>}
         </div>
-        <button onClick={() => setOwnerMenuOpen(true)} className="w-9 h-9 rounded-full border border-border flex items-center justify-center"><MoreHorizontal size={16} /></button>
+        <button onClick={() => setOwnerMenuOpen(true)} className="w-9 h-9 rounded-full border border-border flex items-center justify-center">
+          <MoreHorizontal size={16} />
+        </button>
       </div>
 
-      {/* Cover */}
+      {/* ── Cover / hero ── */}
       <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="px-5">
         <div className="relative rounded-2xl overflow-hidden">
-          {post.coverUrl && <img src={post.coverUrl} alt="" className={`w-full aspect-[16/10] object-cover ${locked ? "blur-sm" : ""}`} />}
-          {!post.coverUrl && <div className="w-full aspect-[16/10] bg-gradient-to-br from-ochre/20 to-plum/20" />}
-          <div className="absolute inset-0 bg-gradient-to-t from-black/55 via-transparent to-transparent" />
+          {post.coverUrl
+            ? <img src={post.coverUrl} alt="" className={`w-full aspect-[16/10] object-cover ${locked ? "blur-sm" : ""}`} />
+            : <div className="w-full aspect-[16/10]" style={{ background: kindGradient(post.kind) }} />
+          }
+          <div className="absolute inset-0 bg-gradient-to-t from-black/65 via-transparent to-transparent" />
+
+          {/* Play button overlay for audio posts */}
+          {isAudio && !locked && (
+            <button onClick={toggleAudio}
+              className="absolute inset-0 flex items-center justify-center"
+              aria-label={playing ? "Pause" : "Play"}>
+              <motion.div whileTap={{ scale: 0.92 }}
+                className="w-[60px] h-[60px] rounded-full flex items-center justify-center"
+                style={{ background: "rgba(255,255,255,0.92)", boxShadow: "0 8px 32px rgba(0,0,0,0.4)" }}>
+                {playing
+                  ? <Pause size={22} className="text-foreground" />
+                  : <Play size={22} className="text-foreground ml-0.5" fill="currentColor" />
+                }
+              </motion.div>
+            </button>
+          )}
+
           <div className="absolute bottom-0 left-0 right-0 p-5">
-            <div className="text-[11px] uppercase tracking-[0.18em] text-white/80 mb-1">{post.tags[0]}</div>
-            <div className="font-['Playfair_Display'] text-[28px] leading-tight text-white">{post.title}</div>
+            <div className="text-[11px] uppercase tracking-[0.18em] text-white/70 mb-1">{post.tags[0]}</div>
+            <div className="font-['Playfair_Display'] text-[26px] leading-tight text-white">{post.title}</div>
           </div>
         </div>
       </motion.div>
 
-      {/* Author strip */}
+      {/* ── Author strip ── */}
       {author && (
         <div className="px-5 mt-4 flex items-center justify-between">
           <Link href={`/u/${author.handle}`} className="flex items-center gap-3">
@@ -215,78 +330,103 @@ export default function PostDetail() {
               <div className="text-[11px] text-muted-foreground">@{author.handle}</div>
             </div>
           </Link>
-          <button onClick={() => setStripeTipOpen(true)} className="text-[12px] px-3 py-1.5 rounded-full border border-ochre text-ochre hover:bg-ochre hover:text-white transition-colors">Tip</button>
+          <button onClick={() => setStripeTipOpen(true)}
+            className="text-[12px] px-3 py-1.5 rounded-full border border-ochre text-ochre hover:bg-ochre hover:text-white transition-colors">
+            Tip
+          </button>
         </div>
       )}
 
-      {/* Audio player */}
+      {/* ── Audio player (voice / reel) ── */}
       {isAudio && !locked && (
         <div className="mx-5 mt-5 rounded-2xl border border-border bg-card p-4">
-          {post.audioUrl && (
-            <audio ref={audioRef} src={post.audioUrl} preload="metadata" className="hidden" />
-          )}
           <div className="flex items-center gap-3">
-            <button
-              onClick={toggleAudio}
-              disabled={!post.audioUrl}
-              className="w-11 h-11 rounded-full bg-foreground text-background flex items-center justify-center disabled:opacity-40"
-            >
+            <button onClick={toggleAudio} disabled={!post.audioUrl}
+              className="w-11 h-11 rounded-full bg-foreground text-background flex items-center justify-center disabled:opacity-40 active:scale-90 transition-transform">
               {playing ? <Pause size={16} /> : <Play size={16} className="ml-0.5" />}
             </button>
             <div className="flex-1">
               {post.audioUrl ? (
                 <>
-                  {/* Waveform bars */}
                   <div className="flex items-end gap-[2px] h-7">
                     {Array.from({ length: 36 }).map((_, i) => (
-                      <span key={i} className="w-[3px] bg-terracotta rounded-sm" style={{ height: `${20 + ((i * 17) % 80)}%`, animation: playing ? `pd-bar 1.${(i % 9) + 2}s ease-in-out infinite` : "none" }} />
+                      <span key={i} className="w-[3px] bg-terracotta rounded-sm"
+                        style={{ height: `${20 + ((i * 17) % 80)}%`, animation: playing ? `pd-bar 1.${(i % 9) + 2}s ease-in-out infinite` : "none" }} />
                     ))}
                   </div>
-                  {/* Progress bar */}
-                  <div className="mt-2 h-1 rounded-full bg-border overflow-hidden">
-                    <div className="h-full bg-terracotta rounded-full transition-all" style={{ width: `${progressPct}%` }} />
+                  <div className="mt-2 h-1 rounded-full bg-border overflow-hidden cursor-pointer"
+                    onClick={(e) => {
+                      const rect = e.currentTarget.getBoundingClientRect();
+                      audioPlayer.seek(((e.clientX - rect.left) / rect.width) * 100);
+                    }}>
+                    <div className="h-full bg-terracotta rounded-full" style={{ width: `${progressPct}%` }} />
                   </div>
                   <div className="flex justify-between text-[10px] text-muted-foreground mt-1">
-                    <span>{fmtTime(currentTime)}</span>
-                    <span>{fmt(post.durationSec)}</span>
+                    <span>{fmt(currentTime)}</span>
+                    <span>{fmt(isCurrentTrack ? audioPlayer.duration : post.durationSec)}</span>
                   </div>
                 </>
               ) : (
-                <div className="text-[12px] text-muted-foreground italic">No audio available for this post</div>
+                <div className="text-[12px] text-muted-foreground italic">No audio available</div>
               )}
             </div>
           </div>
         </div>
       )}
 
-      {/* Locked overlay or Body */}
+      {/* ── Body / locked ── */}
       {locked ? (
         <LockedOverlay post={post} author={author} onUnlocked={() => setUnlocked(true)} />
       ) : (
-        <div className="px-6 mt-6">
-          <div className="font-['Playfair_Display'] text-[18px] leading-[1.7] text-foreground whitespace-pre-line">{post.body}</div>
-          <div className="mt-4 flex flex-wrap gap-2">
-            {post.tags.map((t) => (
-              <span key={t} className="text-[11px] px-2.5 py-1 rounded-full bg-foreground/5 text-muted-foreground">#{t}</span>
-            ))}
-          </div>
-        </div>
+        <>
+          {isText && post.body && (
+            <div className="px-6 mt-6">
+              {/* Reading mode CTA for text/story posts */}
+              <button onClick={() => setReadingMode(true)}
+                className="flex items-center gap-2 text-[11px] font-['Inter'] tracking-[0.12em] uppercase text-muted-foreground hover:text-terracotta transition-colors mb-5">
+                <BookOpen size={13} /> Read in full screen
+              </button>
+              {/* Preview excerpt */}
+              <div className="font-['Playfair_Display'] text-[18px] leading-[1.75] text-foreground whitespace-pre-line">
+                {post.body}
+              </div>
+              <div className="mt-4 flex flex-wrap gap-2">
+                {post.tags.map((t) => (
+                  <span key={t} className="text-[11px] px-2.5 py-1 rounded-full bg-foreground/5 text-muted-foreground">#{t}</span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {!isText && post.body && (
+            <div className="px-6 mt-6">
+              <div className="font-['Playfair_Display'] text-[18px] leading-[1.7] text-foreground whitespace-pre-line">{post.body}</div>
+              <div className="mt-4 flex flex-wrap gap-2">
+                {post.tags.map((t) => (
+                  <span key={t} className="text-[11px] px-2.5 py-1 rounded-full bg-foreground/5 text-muted-foreground">#{t}</span>
+                ))}
+              </div>
+            </div>
+          )}
+        </>
       )}
 
-      {/* Reactions */}
+      {/* ── Reactions ── */}
       <div className="px-5 mt-5 flex items-center gap-3">
-        <motion.button whileTap={{ scale: 0.9 }} onClick={() => like.mutate()} className={`flex items-center gap-1.5 px-3.5 py-2 rounded-full border ${post.liked ? "bg-terracotta text-white border-terracotta" : "border-border text-foreground"}`}>
+        <motion.button whileTap={{ scale: 0.9 }} onClick={() => like.mutate()}
+          className={`flex items-center gap-1.5 px-3.5 py-2 rounded-full border ${post.liked ? "bg-terracotta text-white border-terracotta" : "border-border text-foreground"}`}>
           <Heart size={15} fill={post.liked ? "currentColor" : "none"} /><span className="text-[12px]">{post.likes}</span>
         </motion.button>
         <div className="flex items-center gap-1.5 px-3.5 py-2 rounded-full border border-border">
           <MessageCircle size={15} /><span className="text-[12px]">{post.comments}</span>
         </div>
-        <button onClick={() => { navigator.clipboard?.writeText(window.location.href); toast.success("Link copied"); earnPts.mutate({ userId: me, points: 5 }); }} className="flex items-center gap-1.5 px-3.5 py-2 rounded-full border border-border ml-auto">
+        <button onClick={() => { navigator.clipboard?.writeText(window.location.href); toast.success("Link copied"); earnPts.mutate({ userId: me, points: 5 }); }}
+          className="flex items-center gap-1.5 px-3.5 py-2 rounded-full border border-border ml-auto">
           <Share2 size={15} /><span className="text-[12px]">Share</span>
         </button>
       </div>
 
-      {/* Comments */}
+      {/* ── Comments ── */}
       {!locked && (
         <div className="px-5 mt-7">
           <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground mb-3">Comments · {comments.length}</div>
@@ -295,21 +435,23 @@ export default function PostDetail() {
             {comments.length === 0 && <div className="text-[12px] text-muted-foreground italic">Be the first to leave a quiet word.</div>}
           </div>
           <div className="mt-4 flex items-center gap-2">
-            <input value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="Write a comment…" className="flex-1 bg-card border border-border rounded-full px-4 py-2.5 text-[13px] outline-none focus:border-terracotta" />
-            <button onClick={() => { if (draft.trim()) { addC.mutate(draft); setDraft(""); } }} className="w-10 h-10 rounded-full bg-foreground text-background flex items-center justify-center">
+            <input value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="Write a comment…"
+              className="flex-1 bg-card border border-border rounded-full px-4 py-2.5 text-[13px] outline-none focus:border-terracotta" />
+            <button onClick={() => { if (draft.trim()) { addC.mutate(draft); setDraft(""); } }}
+              className="w-10 h-10 rounded-full bg-foreground text-background flex items-center justify-center">
               <Send size={15} />
             </button>
           </div>
         </div>
       )}
 
-      {/* Related */}
+      {/* ── Related ── */}
       {!locked && related.length > 0 && (
         <div className="px-5 mt-9 mb-10">
           <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground mb-3">Read next</div>
           <div className="space-y-2">
             {related.map((r) => (
-              <Link key={r.id} href={`/post/${r.id}`} className="block p-3 rounded-xl bg-card border border-border hover:border-terracotta">
+              <Link key={r.id} href={`/post/${r.id}`} className="block p-3 rounded-xl bg-card border border-border hover:border-terracotta transition-colors">
                 <div className="text-[10px] uppercase tracking-[0.15em] text-muted-foreground">{r.kind}</div>
                 <div className="text-[15px] font-['Playfair_Display']">{r.title}</div>
               </Link>
@@ -318,46 +460,27 @@ export default function PostDetail() {
         </div>
       )}
 
+      {/* ── Stripe tip modal ── */}
       {stripeTipOpen && post && author && (
-        <PaymentModal
-          mode="tip"
-          recipientId={post.authorId}
-          postId={post.id}
-          onClose={() => setStripeTipOpen(false)}
-        />
+        <PaymentModal mode="tip" recipientId={post.authorId} postId={post.id} onClose={() => setStripeTipOpen(false)} />
       )}
 
-      {/* Owner action sheet */}
+      {/* ── Owner action sheet ── */}
       {ownerMenuOpen && (
         <div className="fixed inset-0 z-50 bg-black/50 flex items-end justify-center" onClick={() => { setOwnerMenuOpen(false); setConfirmDelete(false); }}>
-          <motion.div
-            initial={{ y: "100%" }} animate={{ y: 0 }} transition={{ type: "spring", damping: 28, stiffness: 280 }}
+          <motion.div initial={{ y: "100%" }} animate={{ y: 0 }} transition={{ type: "spring", damping: 28, stiffness: 280 }}
             onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-[430px] bg-background rounded-t-3xl px-6 pt-4 pb-10"
-          >
+            className="w-full max-w-[430px] bg-background rounded-t-3xl px-6 pt-4 pb-10">
             <div className="w-10 h-1 rounded-full bg-border mx-auto mb-5" />
-
             {isAuthor ? (
               <>
-                {/* Edit */}
-                <button
-                  onClick={() => { setOwnerMenuOpen(false); setLocation(`/post/${post.id}/edit`); }}
-                  className="w-full flex items-center gap-4 py-4 border-b border-border"
-                >
-                  <div className="w-9 h-9 rounded-full bg-ochre/12 flex items-center justify-center">
-                    <Edit2 size={15} className="text-ochre" />
-                  </div>
+                <button onClick={() => { setOwnerMenuOpen(false); setLocation(`/post/${post.id}/edit`); }}
+                  className="w-full flex items-center gap-4 py-4 border-b border-border">
+                  <div className="w-9 h-9 rounded-full bg-ochre/12 flex items-center justify-center"><Edit2 size={15} className="text-ochre" /></div>
                   <span className="text-[14px] font-['Inter']">Edit post</span>
                 </button>
-
-                {/* Private/Public toggle */}
-                <button
-                  onClick={() => {
-                    updatePost.mutate({ postId: post.id, patch: { isPrivate: !post.isPrivate } });
-                    setOwnerMenuOpen(false);
-                  }}
-                  className="w-full flex items-center gap-4 py-4 border-b border-border"
-                >
+                <button onClick={() => { updatePost.mutate({ postId: post.id, patch: { isPrivate: !post.isPrivate } }); setOwnerMenuOpen(false); }}
+                  className="w-full flex items-center gap-4 py-4 border-b border-border">
                   <div className="w-9 h-9 rounded-full bg-plum/12 flex items-center justify-center">
                     {post.isPrivate ? <Eye size={15} className="text-plum" /> : <EyeOff size={15} className="text-plum" />}
                   </div>
@@ -366,13 +489,9 @@ export default function PostDetail() {
                     <div className="text-[11px] text-muted-foreground">{post.isPrivate ? "Everyone can see" : "Only you can see"}</div>
                   </div>
                 </button>
-
-                {/* Delete */}
                 {!confirmDelete ? (
                   <button onClick={() => setConfirmDelete(true)} className="w-full flex items-center gap-4 py-4">
-                    <div className="w-9 h-9 rounded-full bg-red-500/12 flex items-center justify-center">
-                      <Trash2 size={15} className="text-red-500" />
-                    </div>
+                    <div className="w-9 h-9 rounded-full bg-red-500/12 flex items-center justify-center"><Trash2 size={15} className="text-red-500" /></div>
                     <span className="text-[14px] font-['Inter'] text-red-500">Delete post</span>
                   </button>
                 ) : (
@@ -380,13 +499,9 @@ export default function PostDetail() {
                     <div className="text-[13px] text-muted-foreground text-center mb-4">This cannot be undone. Are you sure?</div>
                     <div className="flex gap-3">
                       <button onClick={() => setConfirmDelete(false)} className="flex-1 py-3 rounded-xl border border-border text-[13px]">Cancel</button>
-                      <button
-                        onClick={() => {
-                          deletePostMut.mutate(post.id, { onSuccess: () => { setOwnerMenuOpen(false); setLocation("/"); } });
-                        }}
+                      <button onClick={() => deletePostMut.mutate(post.id, { onSuccess: () => { setOwnerMenuOpen(false); setLocation("/"); } })}
                         disabled={deletePostMut.isPending}
-                        className="flex-1 py-3 rounded-xl bg-red-500 text-white text-[13px] disabled:opacity-50"
-                      >
+                        className="flex-1 py-3 rounded-xl bg-red-500 text-white text-[13px] disabled:opacity-50">
                         {deletePostMut.isPending ? "Deleting…" : "Delete"}
                       </button>
                     </div>
@@ -399,6 +514,13 @@ export default function PostDetail() {
           </motion.div>
         </div>
       )}
+
+      {/* ── Reading mode overlay ── */}
+      <AnimatePresence>
+        {readingMode && (
+          <ReadingMode post={post} author={author} onClose={() => setReadingMode(false)} />
+        )}
+      </AnimatePresence>
     </div>
   );
 }

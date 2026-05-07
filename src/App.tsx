@@ -65,6 +65,8 @@ import AdminLogs from "@/pages/admin/logs";
 
 // Layouts
 import MobileShell from "@/components/layout/MobileShell";
+import { AudioProvider } from "@/lib/audioContext";
+import PWAInstallPrompt from "@/components/PWAInstallPrompt";
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: Infinity } },
@@ -264,21 +266,24 @@ function App() {
   return (
     <AppErrorBoundary>
       <QueryClientProvider client={queryClient}>
-        <TooltipProvider>
-          {!ready ? (
-            <div className="min-h-[100dvh] w-full bg-[#E7E3DB] flex justify-center">
-              <div className="w-full max-w-[430px] min-h-[100dvh] bg-[#F5F3EF] relative shadow-2xl overflow-hidden flex flex-col items-center justify-center">
-                <div className="text-[14px] text-[#6B6B6B] font-['Inter']">Loading Mo Katha…</div>
+        <AudioProvider>
+          <TooltipProvider>
+            {!ready ? (
+              <div className="min-h-[100dvh] w-full bg-[#E7E3DB] flex justify-center">
+                <div className="w-full max-w-[430px] min-h-[100dvh] bg-[#F5F3EF] relative shadow-2xl overflow-hidden flex flex-col items-center justify-center">
+                  <div className="text-[14px] text-[#6B6B6B] font-['Inter']">Loading Mo Katha…</div>
+                </div>
               </div>
-            </div>
-          ) : null}
-          <WouterRouter base={routerBase}>
-            <AuthSync />
-            <Router />
-          </WouterRouter>
-          <Toaster />
-          <SonnerToaster />
-        </TooltipProvider>
+            ) : null}
+            <WouterRouter base={routerBase}>
+              <AuthSync />
+              <Router />
+            </WouterRouter>
+            <Toaster />
+            <SonnerToaster />
+            <PWAInstallPrompt />
+          </TooltipProvider>
+        </AudioProvider>
       </QueryClientProvider>
     </AppErrorBoundary>
   );
