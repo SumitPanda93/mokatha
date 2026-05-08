@@ -2,7 +2,7 @@
  * MehfilRoom — immersive live audio room.
  * Features: Supabase Presence for participants, DB-backed speaker queue,
  * broadcast chat, ticketed paywall, host controls, support (chai) integration.
- * Audio is aspirational UI in Phase 1 — WebRTC integration is Phase 2.
+ * Audio: LiveKit WebRTC (VITE_LIVEKIT_URL required; gracefully degraded if absent).
  */
 import { useEffect, useState, useRef } from "react";
 import { useParams, useLocation } from "wouter";
@@ -21,6 +21,8 @@ import {
   ChevronRight, CheckCircle, XCircle, Crown, Radio,
 } from "lucide-react";
 import SupportSheet from "@/components/SupportSheet";
+import { connectToMehfil, isLiveKitConfigured, LiveKitRoom as LKRoom } from "@/lib/livekit";
+import { ConnectionState } from "livekit-client";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -76,6 +78,29 @@ const AudioBars = ({ active }: { active: boolean }) => (
     ))}
   </div>
 );
+
+function SpeakerActiveView({ muted, onToggleMute }: { muted: boolean; onToggleMute: () => void }) {
+  return (
+    <div className="text-center">
+      <motion.button whileTap={{ scale: 0.93 }} onClick={onToggleMute}
+        className="w-16 h-16 rounded-full mx-auto flex items-center justify-center mb-3"
+        style={{
+          background: muted ? "rgba(247,106,74,0.15)" : "rgba(107,232,158,0.15)",
+          border: `1.5px solid ${muted ? "#F76A4A" : "#6BE89E"}`,
+        }}>
+        {muted
+          ? <MicOff size={24} style={{ color: "#F76A4A" }} />
+          : <Mic size={24} style={{ color: "#6BE89E" }} />}
+      </motion.button>
+      <div className="text-[14px] font-['Playfair_Display'] italic" style={{ color: "#6BE89E" }}>
+        {muted ? "Mic off" : "You're speaking"}
+      </div>
+      <div className="text-[11px] mt-1" style={{ color: "rgba(245,243,239,0.35)" }}>
+        {muted ? "Tap to unmute" : "Host will end your turn when ready"}
+      </div>
+    </div>
+  );
+}
 
 // ─── Sub-screens ──────────────────────────────────────────────────────────────
 
@@ -155,8 +180,10 @@ export default function MehfilRoom() {
   const [hasTicket, setHasTicket] = useState(false);
   const [muted, setMuted] = useState(false);
 
-  const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
-  const chatRef    = useRef<HTMLDivElement>(null);
+  const channelRef  = useRef<ReturnType<typeof supabase.channel> | null>(null);
+  const chatRef     = useRef<HTMLDivElement>(null);
+  const livekitRef  = useRef<LKRoom | null>(null);
+  const [lkConnState, setLkConnState] = useState<ConnectionState | null>(null);
 
   const isHost        = !!me && !!mehfil && me === mehfil.hostId;
   const activeSpeaker = queue.find((q) => q.status === "speaking");
@@ -166,6 +193,19 @@ export default function MehfilRoom() {
   const activeSpeakerPresence = activeSpeaker
     ? presence.find((p) => p.user_id === activeSpeaker.userId)
     : null;
+
+  // ── Auto-enable mic when approved as speaker ──────────────────────────────
+  useEffect(() => {
+    if (!livekitRef.current) return;
+    if (myEntry?.status === "speaking") {
+      livekitRef.current.setMicEnabled(true);
+      setMuted(false);
+      toast.success("🎙️ You're now speaking!", { duration: 3000 });
+    } else if (myEntry?.status === "done" || myEntry?.status === "rejected") {
+      livekitRef.current.setMicEnabled(false);
+      setMuted(false);
+    }
+  }, [myEntry?.status]);
 
   // ── Hooks ──
   const raiseHandMut  = useRaiseHand();
@@ -182,6 +222,24 @@ export default function MehfilRoom() {
     setJoined(true);
     if (me) earnInkPoints(me, 15).catch(console.warn);
 
+    // ── LiveKit audio ─────────────────────────────────────────────────────────
+    if (isLiveKitConfigured()) {
+      const canPublish = isHost; // host publishes; listeners subscribe only
+      connectToMehfil(id, me, canPublish, {
+        onConnectionStateChange: (state) => setLkConnState(state),
+        onParticipantCountChange: (count) => {
+          // Optionally update a listener count display
+          console.debug("[LiveKit] participants:", count);
+        },
+        onError: (err) => {
+          console.error("[LiveKit] error", err);
+          toast.error("Audio connection issue — retrying…", { duration: 3000 });
+        },
+      }).then((room) => {
+        if (room) livekitRef.current = room;
+      });
+    }
+
     const role: PresencePayload["role"] = isHost ? "host" : "listener";
     const channel = supabase.channel(`mehfil:${id}`, {
       config: { presence: { key: me } },
@@ -193,7 +251,7 @@ export default function MehfilRoom() {
         setPresence(Object.values(state).flat());
       })
       .on("presence", { event: "join" }, ({ newPresences }) => {
-        const p = newPresences[0] as PresencePayload | undefined;
+        const p = newPresences[0] as unknown as PresencePayload | undefined;
         if (p && p.user_id !== me) {
           setChat((c) => [...c.slice(-60), {
             id: `sys${Date.now()}`,
@@ -224,6 +282,8 @@ export default function MehfilRoom() {
     channelRef.current?.untrack();
     if (channelRef.current) supabase.removeChannel(channelRef.current);
     channelRef.current = null;
+    livekitRef.current?.disconnect();
+    livekitRef.current = null;
     setLocation("/mehfil");
   };
 
@@ -231,6 +291,8 @@ export default function MehfilRoom() {
     return () => {
       channelRef.current?.untrack();
       if (channelRef.current) supabase.removeChannel(channelRef.current);
+      livekitRef.current?.disconnect();
+      livekitRef.current = null;
     };
   }, []);
 
@@ -704,18 +766,18 @@ export default function MehfilRoom() {
                     </motion.button>
                   </>
                 ) : myEntry?.status === "speaking" ? (
-                  <div className="text-center">
-                    <div className="w-12 h-12 rounded-full mx-auto flex items-center justify-center mb-3"
-                      style={{ background: "rgba(107,232,158,0.15)", border: "1.5px solid #6BE89E" }}>
-                      <Mic size={20} style={{ color: "#6BE89E" }} />
-                    </div>
-                    <div className="text-[14px] font-['Playfair_Display'] italic" style={{ color: "#6BE89E" }}>
-                      You're speaking
-                    </div>
-                    <div className="text-[11px] mt-1" style={{ color: "rgba(245,243,239,0.35)" }}>
-                      Host will end your turn when ready
-                    </div>
-                  </div>
+                  <SpeakerActiveView
+                    muted={muted}
+                    onToggleMute={async () => {
+                      const newMuted = !muted;
+                      setMuted(newMuted);
+                      if (livekitRef.current) {
+                        await livekitRef.current.setMicEnabled(!newMuted);
+                      } else {
+                        toast("Audio not connected — check LiveKit config");
+                      }
+                    }}
+                  />
                 ) : (
                   <>
                     <div className="text-[12px] text-center" style={{ color: "rgba(245,243,239,0.38)" }}>
@@ -756,10 +818,17 @@ export default function MehfilRoom() {
           ☕ <span>Chai</span>
         </motion.button>
 
-        {/* Mute toggle (aspirational UI) */}
+        {/* Mute toggle — wired to LiveKit when connected */}
         <motion.button whileTap={{ scale: 0.93 }}
-          onClick={() => setMuted((v) => !v)}
-          className="w-12 h-12 rounded-full flex items-center justify-center"
+          onClick={async () => {
+            const newMuted = !muted;
+            setMuted(newMuted);
+            if (livekitRef.current) {
+              // Mic enabled = NOT muted
+              await livekitRef.current.setMicEnabled(!newMuted);
+            }
+          }}
+          className="w-12 h-12 rounded-full flex items-center justify-center relative"
           style={{
             background: muted ? "rgba(247,106,74,0.15)" : "rgba(255,255,255,0.09)",
             border: muted ? "1px solid rgba(247,106,74,0.35)" : "1px solid rgba(255,255,255,0.12)",
@@ -767,6 +836,11 @@ export default function MehfilRoom() {
           {muted
             ? <MicOff size={18} style={{ color: "#F76A4A" }} />
             : <Mic size={18} style={{ color: "rgba(245,243,239,0.70)" }} />}
+          {/* LiveKit connection status dot */}
+          {lkConnState && (
+            <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border border-[#1A0F14]"
+              style={{ background: lkConnState === ConnectionState.Connected ? "#6BE89E" : lkConnState === ConnectionState.Reconnecting ? "#E8B14A" : "#888" }} />
+          )}
         </motion.button>
 
         {/* Queue / raise hand */}

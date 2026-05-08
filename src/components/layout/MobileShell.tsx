@@ -1,13 +1,16 @@
-import React, { useState, useRef } from "react";
+import React, { useState } from "react";
 import { Link, useLocation } from "wouter";
-import { Home, Plus, MessageCircle, User, Radio, Play, Pause, X, Mic, ChevronDown } from "lucide-react";
+import {
+  Home, Plus, MessageCircle, User, Radio, Play, Pause, X, Mic, ChevronDown,
+  Pen, Video, BookOpen, Mic2, X as XIcon,
+} from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAudioPlayer } from "@/lib/audioContext";
 
 const fmtTime = (s: number) =>
   `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 
-// ─── Listening Mode (full-screen ambient overlay) ─────────────────────────────
+// ─── Listening Mode ────────────────────────────────────────────────────────────
 
 function ListeningMode({ onClose }: { onClose: () => void }) {
   const { track, playing, progressPct, currentTime, duration, toggle, seek, dismiss } = useAudioPlayer();
@@ -24,7 +27,6 @@ function ListeningMode({ onClose }: { onClose: () => void }) {
       transition={{ type: "spring", damping: 30, stiffness: 280 }}
       className="fixed inset-0 z-[60] flex flex-col overflow-hidden"
     >
-      {/* Ambient background */}
       {hasGlow ? (
         <>
           <div className="absolute inset-0">
@@ -36,16 +38,13 @@ function ListeningMode({ onClose }: { onClose: () => void }) {
         <div className="absolute inset-0" style={{ background: "linear-gradient(160deg, #1C0F06 0%, #2E1A0C 40%, #1A0D18 80%, #0E0A18 100%)" }} />
       )}
 
-      {/* Subtle ambient glow */}
       <div className="absolute -top-20 left-1/2 -translate-x-1/2 w-[280px] h-[280px] rounded-full opacity-30"
         style={{ background: "radial-gradient(circle, hsl(var(--ochre)), transparent 70%)", filter: "blur(60px)" }} />
 
-      {/* Content */}
-      <div className="relative flex flex-col h-full px-6 pt-10 pb-8 safe-top safe-bottom">
-        {/* Top bar */}
+      <div className="relative flex flex-col h-full px-6 pt-safe-top pb-safe-bottom" style={{ paddingTop: "max(env(safe-area-inset-top), 40px)", paddingBottom: "max(env(safe-area-inset-bottom), 32px)" }}>
         <div className="flex items-center justify-between mb-6">
           <button onClick={onClose}
-            className="w-10 h-10 rounded-full flex items-center justify-center transition-colors"
+            className="w-10 h-10 rounded-full flex items-center justify-center"
             style={{ background: "rgba(255,255,255,0.1)" }}>
             <ChevronDown size={20} className="text-white" />
           </button>
@@ -55,12 +54,8 @@ function ListeningMode({ onClose }: { onClose: () => void }) {
           <div className="w-10" />
         </div>
 
-        {/* Cover art */}
         <div className="flex-1 flex items-center justify-center py-4">
-          <motion.div
-            animate={{ scale: playing ? 1 : 0.94 }}
-            transition={{ type: "spring", stiffness: 200, damping: 20 }}
-          >
+          <motion.div animate={{ scale: playing ? 1 : 0.94 }} transition={{ type: "spring", stiffness: 200, damping: 20 }}>
             {track.coverUrl ? (
               <div className="w-[220px] h-[220px] rounded-3xl overflow-hidden"
                 style={{ boxShadow: "0 24px 60px rgba(0,0,0,0.7), 0 0 0 1px rgba(255,255,255,0.08)" }}>
@@ -70,7 +65,6 @@ function ListeningMode({ onClose }: { onClose: () => void }) {
               <div className="w-[200px] h-[200px] rounded-3xl flex flex-col items-center justify-center gap-3"
                 style={{ background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.1)", boxShadow: "0 24px 60px rgba(0,0,0,0.5)" }}>
                 <Mic size={40} className="text-ochre/80" />
-                {/* Equalizer bars */}
                 <div className="flex items-end gap-[3px] h-6">
                   {[0.5, 0.8, 0.4, 1, 0.6, 0.9, 0.5, 0.7, 0.4, 0.8].map((_, i) => (
                     <div key={i} className="w-[2.5px] rounded-full bg-ochre/60"
@@ -82,7 +76,6 @@ function ListeningMode({ onClose }: { onClose: () => void }) {
           </motion.div>
         </div>
 
-        {/* Track info */}
         <div className="mb-6">
           <div className="font-['Playfair_Display'] text-[24px] text-white leading-tight italic line-clamp-2 mb-1">
             {track.title}
@@ -90,7 +83,6 @@ function ListeningMode({ onClose }: { onClose: () => void }) {
           <div className="text-[13px] text-white/55 font-['Inter']">{track.authorName}</div>
         </div>
 
-        {/* Seekable progress bar */}
         <div
           className="h-1.5 rounded-full overflow-hidden mb-2 cursor-pointer active:scale-y-150 transition-transform"
           style={{ background: "rgba(255,255,255,0.18)" }}
@@ -106,22 +98,16 @@ function ListeningMode({ onClose }: { onClose: () => void }) {
           <span>{fmtTime(totalSec)}</span>
         </div>
 
-        {/* Controls */}
         <div className="flex items-center justify-center">
-          <motion.button
-            whileTap={{ scale: 0.92 }}
-            onClick={toggle}
+          <motion.button whileTap={{ scale: 0.92 }} onClick={toggle}
             className="w-[72px] h-[72px] rounded-full flex items-center justify-center"
-            style={{ background: "rgba(255,255,255,0.95)", boxShadow: "0 16px 40px rgba(0,0,0,0.5)" }}
-          >
+            style={{ background: "rgba(255,255,255,0.95)", boxShadow: "0 16px 40px rgba(0,0,0,0.5)" }}>
             {playing
               ? <Pause size={26} style={{ color: "#1C0F06" }} />
-              : <Play size={26} fill="#1C0F06" style={{ color: "#1C0F06", marginLeft: 3 }} />
-            }
+              : <Play size={26} fill="#1C0F06" style={{ color: "#1C0F06", marginLeft: 3 }} />}
           </motion.button>
         </div>
 
-        {/* Dismiss player */}
         <button onClick={() => { dismiss(); onClose(); }}
           className="mt-6 py-3 text-[12px] font-['Inter'] text-white/30 hover:text-white/60 transition-colors text-center">
           Close player
@@ -143,17 +129,16 @@ function MiniPlayer({ onExpand }: { onExpand: () => void }) {
       animate={{ y: 0, opacity: 1 }}
       exit={{ y: 80, opacity: 0 }}
       transition={{ type: "spring", damping: 26, stiffness: 300 }}
-      className="absolute bottom-[70px] left-2 right-2 z-40"
+      // Sits above the fixed nav. Nav is ~72px tall + safe-area (avg 20px) = ~92px
+      className="fixed bottom-[80px] left-2 right-2 z-40"
+      style={{ bottom: "calc(72px + max(env(safe-area-inset-bottom), 0px) + 8px)" }}
     >
       <div className="rounded-2xl overflow-hidden bg-background border border-border/70"
         style={{ boxShadow: "0 8px 32px rgba(0,0,0,0.15), 0 2px 8px rgba(0,0,0,0.1)" }}>
-        {/* Thin progress bar at top */}
         <div className="h-[2px]" style={{ background: "hsl(var(--border))" }}>
           <motion.div className="h-full bg-terracotta" style={{ width: `${progressPct}%` }} />
         </div>
-
         <div className="flex items-center gap-3 px-3.5 py-2.5 cursor-pointer" onClick={onExpand}>
-          {/* Cover */}
           {track.coverUrl ? (
             <img src={track.coverUrl} alt="" className="w-10 h-10 rounded-xl object-cover shrink-0" />
           ) : (
@@ -162,14 +147,10 @@ function MiniPlayer({ onExpand }: { onExpand: () => void }) {
               <Mic size={14} className="text-ochre" />
             </div>
           )}
-
-          {/* Title + author */}
           <div className="flex-1 min-w-0">
             <div className="text-[13px] font-['Playfair_Display'] leading-tight line-clamp-1">{track.title}</div>
             <div className="text-[10px] text-muted-foreground font-['Inter'] mt-0.5">{track.authorName}</div>
           </div>
-
-          {/* Controls */}
           <div className="flex items-center gap-1.5 shrink-0">
             <button
               onClick={(e) => { e.stopPropagation(); toggle(); }}
@@ -190,46 +171,125 @@ function MiniPlayer({ onExpand }: { onExpand: () => void }) {
   );
 }
 
+// ─── Create Sheet ─────────────────────────────────────────────────────────────
+
+const CREATE_ACTIONS = [
+  { id: "voice",   emoji: "🎙️",  label: "Voice Post",  sublabel: "Record audio",      path: "/create/voice",   color: "#F76A4A" },
+  { id: "story",   emoji: "✍️",  label: "Write Story", sublabel: "Text or poetry",    path: "/create/story",   color: "#C9A84C" },
+  { id: "reel",    emoji: "📹",  label: "Share Reel",  sublabel: "Short video/audio", path: "/create/reel",    color: "#9B59B6" },
+  { id: "mehfil",  emoji: "🎤",  label: "Start Mehfil",sublabel: "Live voice room",   path: "/mehfil/host/new",color: "#2ECC71" },
+];
+
+function CreateSheet({ onClose, navigate }: { onClose: () => void; navigate: (path: string) => void }) {
+  return (
+    <motion.div
+      className="fixed inset-0 z-50 flex flex-col justify-end"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+    >
+      {/* Backdrop */}
+      <motion.div
+        className="absolute inset-0"
+        style={{ background: "rgba(0,0,0,0.55)", backdropFilter: "blur(12px)" }}
+        onClick={onClose}
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+      />
+
+      {/* Sheet */}
+      <motion.div
+        initial={{ y: "100%" }}
+        animate={{ y: 0 }}
+        exit={{ y: "100%" }}
+        transition={{ type: "spring", damping: 28, stiffness: 300 }}
+        className="relative rounded-t-[28px] bg-background/95 backdrop-blur-xl border-t border-white/8 px-5 pt-5"
+        style={{ paddingBottom: "max(env(safe-area-inset-bottom), 24px)" }}
+      >
+        {/* Drag handle */}
+        <div className="w-9 h-1 rounded-full bg-border mx-auto mb-5" />
+
+        {/* Close */}
+        <button onClick={onClose}
+          className="absolute top-4 right-4 w-8 h-8 rounded-full bg-muted flex items-center justify-center">
+          <XIcon size={14} className="text-muted-foreground" />
+        </button>
+
+        <div className="font-['Playfair_Display'] text-[22px] mb-1">Create</div>
+        <div className="text-[12px] text-muted-foreground font-['Inter'] mb-5">What are you making today?</div>
+
+        <div className="grid grid-cols-2 gap-3 mb-4">
+          {CREATE_ACTIONS.map((a, i) => (
+            <motion.button
+              key={a.id}
+              initial={{ opacity: 0, y: 16 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: i * 0.05 }}
+              whileTap={{ scale: 0.95 }}
+              onClick={() => { onClose(); navigate(a.path); }}
+              className="flex items-center gap-3 px-4 py-4 rounded-2xl text-left"
+              style={{ background: `${a.color}0F`, border: `1px solid ${a.color}28` }}
+            >
+              <span className="text-[24px] leading-none">{a.emoji}</span>
+              <div>
+                <div className="text-[13px] font-['Inter'] font-medium text-foreground">{a.label}</div>
+                <div className="text-[10px] text-muted-foreground mt-0.5">{a.sublabel}</div>
+              </div>
+            </motion.button>
+          ))}
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
 // ─── Shell ────────────────────────────────────────────────────────────────────
 
 interface MobileShellProps { children: React.ReactNode }
 
 export default function MobileShell({ children }: MobileShellProps) {
-  const [location] = useLocation();
+  const [location, navigate] = useLocation();
   const [listeningMode, setListeningMode] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
   const { track } = useAudioPlayer();
 
   const navItems = [
     { id: "home",     label: "Home",     path: "/",         icon: Home },
     { id: "mehfil",   label: "Mehfil",   path: "/mehfil",   icon: Radio },
-    { id: "create",   label: "Create",   path: "/create",   icon: Plus, isCreate: true },
+    { id: "create",   label: "Create",   path: "",          icon: Plus, isCreate: true },
     { id: "messages", label: "Messages", path: "/messages", icon: MessageCircle },
     { id: "profile",  label: "Profile",  path: "/me",       icon: User },
   ];
 
   const isActive = (path: string) =>
-    path === "/" ? location === "/" || location === "/home" : location.startsWith(path);
+    path === "/" ? location === "/" || location === "/home" : path !== "" && location.startsWith(path);
+
+  // Nav height = 72px content + safe-area. Content needs matching bottom padding.
+  const navContentHeight = 72;
 
   return (
-    <div className="w-full h-full flex flex-col relative bg-background text-foreground">
-      {/* Main content — extra bottom padding when mini-player is shown */}
-      <div className={`flex-1 overflow-y-auto overflow-x-hidden no-scrollbar transition-[padding] ${track ? "pb-36" : "pb-24"}`}>
+    <div className="w-full bg-background text-foreground">
+      {/* Main content — bottom padding accounts for fixed nav + optional mini player */}
+      <div style={{ paddingBottom: `calc(${navContentHeight}px + ${track ? "68px + " : ""}max(env(safe-area-inset-bottom), 0px) + 8px)` }}>
         {children}
       </div>
 
-      {/* Mini player — sits above bottom nav */}
+      {/* Mini player — fixed, floats above nav */}
       <AnimatePresence>
         {track && <MiniPlayer onExpand={() => setListeningMode(true)} />}
       </AnimatePresence>
 
-      {/* Bottom nav */}
-      <div className="absolute bottom-0 w-full bg-background/95 backdrop-blur-md border-t border-border z-50">
-        <div className="flex justify-between items-center px-5 pt-3 pb-6">
+      {/* Fixed bottom nav */}
+      <nav
+        className="fixed bottom-0 left-0 right-0 z-50 bg-background/95 backdrop-blur-xl border-t border-border"
+        style={{ paddingBottom: "max(env(safe-area-inset-bottom), 8px)" }}
+      >
+        <div className="flex justify-between items-center px-5 pt-3 pb-2">
           {navItems.map((item) => {
             const active = isActive(item.path);
             if (item.isCreate) {
               return (
-                <Link key={item.id} href={item.path}>
+                <button key={item.id} onClick={() => setCreateOpen(true)}>
                   <div className="relative -top-5">
                     <motion.div whileTap={{ scale: 0.88 }}
                       className="w-14 h-14 rounded-full flex items-center justify-center shadow-2xl"
@@ -237,7 +297,7 @@ export default function MobileShell({ children }: MobileShellProps) {
                       <Plus size={26} className="text-white" strokeWidth={2} />
                     </motion.div>
                   </div>
-                </Link>
+                </button>
               );
             }
             return (
@@ -254,9 +314,19 @@ export default function MobileShell({ children }: MobileShellProps) {
             );
           })}
         </div>
-      </div>
+      </nav>
 
-      {/* Listening Mode — full-screen overlay */}
+      {/* Create sheet */}
+      <AnimatePresence>
+        {createOpen && (
+          <CreateSheet
+            onClose={() => setCreateOpen(false)}
+            navigate={(path) => { navigate(path); }}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Listening Mode overlay */}
       <AnimatePresence>
         {listeningMode && track && (
           <ListeningMode onClose={() => setListeningMode(false)} />

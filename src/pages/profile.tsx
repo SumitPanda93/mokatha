@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useLocation } from "wouter";
-import { Settings, Heart, MessageCircle, Play, Mic, Share2, Radio, Star, Zap, BadgeCheck } from "lucide-react";
+import { Settings, Heart, MessageCircle, Play, Mic, Share2, Radio, Star, Zap, BadgeCheck, Eye, EyeOff } from "lucide-react";
 import { useTitle } from "@/hooks/useTitle";
 import {
   useCurrentUser, usePostsByAuthor, useWalletBalance, useSavedPosts,
@@ -30,6 +30,7 @@ export default function Profile() {
   const { data: followersData = [] } = useFollowers(meId);
   const { data: followingData = [] } = useFollowing(meId);
   const [tab, setTab] = useState<"posts" | "saved">("posts");
+  const [viewAs, setViewAs] = useState(false);
   usePostsRealtime();
 
   // Still resolving auth — show spinner to avoid flash
@@ -76,11 +77,32 @@ export default function Profile() {
     <div className="min-h-screen w-full bg-background flex flex-col">
       {/* Header */}
       <div className="px-5 py-3 flex justify-between items-center sticky top-0 bg-background/90 backdrop-blur-md z-20">
-        <div className="font-['Playfair_Display'] text-[18px]">Profile</div>
-        <Link href="/settings" className="w-9 h-9 rounded-full border border-border flex items-center justify-center hover:bg-black/5">
-          <Settings size={16} strokeWidth={1.5} />
-        </Link>
+        <div className="font-['Playfair_Display'] text-[18px]">
+          {viewAs ? "Visitor view" : "Profile"}
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setViewAs((v) => !v)}
+            className={`w-9 h-9 rounded-full border flex items-center justify-center transition-colors ${viewAs ? "border-terracotta bg-terracotta/10 text-terracotta" : "border-border hover:bg-black/5"}`}
+            title={viewAs ? "Exit visitor view" : "Preview as visitor"}
+          >
+            {viewAs ? <EyeOff size={15} /> : <Eye size={15} />}
+          </button>
+          {!viewAs && (
+            <Link href="/settings" className="w-9 h-9 rounded-full border border-border flex items-center justify-center hover:bg-black/5">
+              <Settings size={16} strokeWidth={1.5} />
+            </Link>
+          )}
+        </div>
       </div>
+
+      {/* View-as banner */}
+      {viewAs && (
+        <div className="mx-5 mb-1 px-4 py-2.5 rounded-2xl bg-terracotta/8 border border-terracotta/20 flex items-center gap-2">
+          <Eye size={13} className="text-terracotta shrink-0" />
+          <span className="text-[12px] text-terracotta font-['Inter']">Viewing as a visitor — this is how others see your profile</span>
+        </div>
+      )}
 
       {/* ── Hero ── */}
       <div className="px-6 pt-4 pb-5 relative">
@@ -168,35 +190,39 @@ export default function Profile() {
           </Link>
         </div>
 
-        {/* Quick action cards */}
-        <div className="grid grid-cols-3 gap-2 mb-4">
-          <Link href="/rewards"
-            className="flex flex-col items-center gap-1.5 py-3 rounded-xl border border-border bg-card hover:border-ochre/50 hover:bg-ochre/5 transition-colors">
-            <Zap size={15} className="text-ochre" />
-            <div className="text-[13px] font-['Playfair_Display']">{ink?.points ?? 0}</div>
-            <div className="text-[9px] text-muted-foreground uppercase tracking-wider">Ink pts</div>
-          </Link>
-          <Link href="/creator-plan"
-            className="flex flex-col items-center gap-1.5 py-3 rounded-xl border border-border bg-card hover:border-plum/50 hover:bg-plum/5 transition-colors">
-            <Star size={15} className="text-plum" />
-            <div className="text-[13px] font-['Playfair_Display']">{plan?.enabled ? `₹${plan.priceMonthly}` : "—"}</div>
-            <div className="text-[9px] text-muted-foreground uppercase tracking-wider">My plan</div>
-          </Link>
-          <Link href="/settings/account"
-            className="flex flex-col items-center gap-1.5 py-3 rounded-xl border border-border bg-card hover:border-sage/50 hover:bg-sage/5 transition-colors">
-            <BadgeCheck size={15} className="text-sage" />
-            <div className="text-[13px] font-['Playfair_Display']">Edit</div>
-            <div className="text-[9px] text-muted-foreground uppercase tracking-wider">Profile</div>
-          </Link>
-        </div>
+        {/* Quick action cards — hidden in visitor view */}
+        {!viewAs && (
+          <div className="grid grid-cols-3 gap-2 mb-4">
+            <Link href="/rewards"
+              className="flex flex-col items-center gap-1.5 py-3 rounded-xl border border-border bg-card hover:border-ochre/50 hover:bg-ochre/5 transition-colors">
+              <Zap size={15} className="text-ochre" />
+              <div className="text-[13px] font-['Playfair_Display']">{ink?.points ?? 0}</div>
+              <div className="text-[9px] text-muted-foreground uppercase tracking-wider">Ink pts</div>
+            </Link>
+            <Link href="/creator-plan"
+              className="flex flex-col items-center gap-1.5 py-3 rounded-xl border border-border bg-card hover:border-plum/50 hover:bg-plum/5 transition-colors">
+              <Star size={15} className="text-plum" />
+              <div className="text-[13px] font-['Playfair_Display']">{plan?.enabled ? `₹${plan.priceMonthly}` : "—"}</div>
+              <div className="text-[9px] text-muted-foreground uppercase tracking-wider">My plan</div>
+            </Link>
+            <Link href="/settings/account"
+              className="flex flex-col items-center gap-1.5 py-3 rounded-xl border border-border bg-card hover:border-sage/50 hover:bg-sage/5 transition-colors">
+              <BadgeCheck size={15} className="text-sage" />
+              <div className="text-[13px] font-['Playfair_Display']">Edit</div>
+              <div className="text-[9px] text-muted-foreground uppercase tracking-wider">Profile</div>
+            </Link>
+          </div>
+        )}
 
-        {/* Action buttons */}
+        {/* Action buttons — host Mehfil hidden in visitor view */}
         <div className="flex gap-2">
-          <Link href="/mehfil/host/new" className="flex-1">
-            <button className="w-full text-[13px] font-['Inter'] text-background bg-foreground rounded-full py-2.5 flex items-center justify-center gap-2 active:scale-[0.98] transition-transform">
-              <Radio size={14} /> Host Mehfil
-            </button>
-          </Link>
+          {!viewAs && (
+            <Link href="/mehfil/host/new" className="flex-1">
+              <button className="w-full text-[13px] font-['Inter'] text-background bg-foreground rounded-full py-2.5 flex items-center justify-center gap-2 active:scale-[0.98] transition-transform">
+                <Radio size={14} /> Host Mehfil
+              </button>
+            </Link>
+          )}
           <button
             onClick={() => navigator.clipboard?.writeText(window.location.origin + `/u/${user.handle}`)}
             className="w-10 h-10 rounded-full border border-border flex items-center justify-center hover:bg-muted/40 transition-colors">
@@ -205,9 +231,9 @@ export default function Profile() {
         </div>
       </div>
 
-      {/* Tabs */}
+      {/* Tabs — only show "saved" when not in visitor view */}
       <div className="border-t border-border px-6 flex gap-6">
-        {(["posts", "saved"] as const).map((t) => (
+        {(viewAs ? (["posts"] as const) : (["posts", "saved"] as const)).map((t) => (
           <button key={t} onClick={() => setTab(t)} className={`py-3 text-[12px] uppercase tracking-[0.15em] border-b-2 transition-colors ${tab === t ? "border-terracotta text-foreground" : "border-transparent text-muted-foreground"}`}>{t}</button>
         ))}
       </div>

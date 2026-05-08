@@ -276,8 +276,9 @@ function AuthSync() {
           // Auto-claim daily streak silently (no toast if already claimed)
           claimStreak.mutate(user.id);
         }
+        return undefined;
       })
-      .catch((e) => console.error("[mk:AuthSync] profile upsert exception", e));
+      .then(undefined, (e: unknown) => console.error("[mk:AuthSync] profile upsert exception", e));
   }, [qc, ready, user]);
 
   return null;

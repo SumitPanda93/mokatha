@@ -2239,6 +2239,39 @@ export function useMehfilQueueRealtime(mehfilId: string) {
   }, [qc, mehfilId]);
 }
 
+// ─── Account deactivation ─────────────────────────────────────────────────────
+
+export async function deactivateAccount(): Promise<void> {
+  const me = getCurrentUserId();
+  if (!me) throw new Error("not_authenticated");
+  const { error } = await supabase
+    .from("profiles")
+    .update({ suspended: true } as Record<string, unknown>)
+    .eq("id", me);
+  if (error) throw error;
+  await supabase.auth.signOut();
+}
+
+export function useDeactivateAccount() {
+  return useMutation({
+    mutationFn: deactivateAccount,
+    onError: (e: Error) => toast.error(e.message ?? "Could not deactivate account"),
+  });
+}
+
+// ─── Handle uniqueness check ──────────────────────────────────────────────────
+
+/** Returns true if the handle is available (no other user has it). */
+export async function checkHandleAvailable(handle: string, excludeUserId: string): Promise<boolean> {
+  if (!handle || handle.length < 2) return false;
+  const { count } = await supabase
+    .from("profiles")
+    .select("id", { count: "exact", head: true })
+    .eq("handle", handle.toLowerCase())
+    .neq("id", excludeUserId);
+  return (count ?? 1) === 0;
+}
+
 // ─── Legacy stubs ─────────────────────────────────────────────────────────────
 
 export function isSaved(_userId: string, _postId: string): boolean { return false; }

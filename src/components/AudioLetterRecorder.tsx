@@ -278,7 +278,7 @@ export default function AudioLetterRecorder({ toUserId, toUserName, onClose }: P
 
               {/* Send */}
               <motion.button type="button" whileTap={{ scale: 0.97 }} onClick={handleSend}
-                disabled={phase === "sending"}
+                disabled={sendLetter.isPending}
                 className="w-full py-4 rounded-2xl text-[14px] font-['Inter'] font-medium"
                 style={{
                   background: "linear-gradient(135deg,#C9A84C 0%,#E09060 55%,#F76A4A 100%)",

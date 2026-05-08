@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { useLocation, useSearch } from "wouter";
 import { ArrowLeft, Send, Search } from "lucide-react";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import { useTitle } from "@/hooks/useTitle";
 import {
   useConversations, useConversationMessages, useSendMessage, useUser,
@@ -48,32 +48,71 @@ function ConversationView({ convId, onBack }: { convId: string; onBack: () => vo
   const endRef = useRef<HTMLDivElement>(null);
   const qc = useQueryClient();
 
+  // Typing indicator state
+  const [typingName, setTypingName] = useState<string | null>(null);
+  const typingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const broadcastRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
+  const lastTypingSent = useRef(0);
+
   // Determine other user
   const { data: convs = [] } = useConversations();
   const conv = convs.find((c) => c.id === convId);
   const otherId = conv?.participantIds.find((id) => id !== me) ?? "";
   const { data: other } = useUser(otherId);
 
-  // Real-time: listen for new messages in this conversation
+  // Real-time: new messages + typing indicator via broadcast
   useEffect(() => {
-    const channel = supabase
+    const msgChannel = supabase
       .channel(`realtime:messages:${convId}`)
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages", filter: `conversation_id=eq.${convId}` }, () => {
         qc.invalidateQueries({ queryKey: QK.messages(convId) });
         qc.invalidateQueries({ queryKey: ["conversations"] });
       })
       .subscribe();
-    return () => { supabase.removeChannel(channel); };
-  }, [convId, qc]);
+
+    // Ephemeral typing channel (no DB writes)
+    const typingChannel = supabase
+      .channel(`typing:${convId}`)
+      .on("broadcast", { event: "typing" }, ({ payload }: { payload: { user_id: string; name: string } }) => {
+        if (payload.user_id === me) return;
+        setTypingName(payload.name || "Someone");
+        if (typingTimer.current) clearTimeout(typingTimer.current);
+        typingTimer.current = setTimeout(() => setTypingName(null), 3000);
+      })
+      .subscribe();
+
+    broadcastRef.current = typingChannel;
+
+    return () => {
+      supabase.removeChannel(msgChannel);
+      supabase.removeChannel(typingChannel);
+      if (typingTimer.current) clearTimeout(typingTimer.current);
+    };
+  }, [convId, me, qc]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [msgs.length]);
 
+  // Broadcast typing event (throttle to once/sec)
+  const onDraftChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setDraft(e.target.value);
+    const now = Date.now();
+    if (broadcastRef.current && now - lastTypingSent.current > 1200) {
+      lastTypingSent.current = now;
+      broadcastRef.current.send({
+        type: "broadcast",
+        event: "typing",
+        payload: { user_id: me, name: other?.displayName ?? "" },
+      });
+    }
+  };
+
   const submit = () => {
     if (!draft.trim()) return;
     send.mutate({ conversationId: convId, body: draft.trim() });
     setDraft("");
+    setTypingName(null);
   };
 
   return (
@@ -84,7 +123,24 @@ function ConversationView({ convId, onBack }: { convId: string; onBack: () => vo
         <img src={other?.avatarUrl} alt="" className="w-9 h-9 rounded-full object-cover" />
         <div>
           <div className="text-[14px] font-['Inter'] font-medium">{other?.displayName}</div>
-          <div className="text-[10px] text-muted-foreground">@{other?.handle}</div>
+          <AnimatePresence mode="wait">
+            {typingName ? (
+              <motion.div
+                key="typing"
+                initial={{ opacity: 0, y: 4 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -4 }}
+                className="flex items-center gap-1"
+              >
+                <TypingDots />
+                <span className="text-[10px] text-terracotta font-['Inter'] italic">typing…</span>
+              </motion.div>
+            ) : (
+              <motion.div key="handle" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+                <div className="text-[10px] text-muted-foreground">@{other?.handle}</div>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
       </div>
 
@@ -116,7 +172,7 @@ function ConversationView({ convId, onBack }: { convId: string; onBack: () => vo
       <div className="px-4 py-3 border-t border-border flex items-center gap-2 bg-background">
         <input
           value={draft}
-          onChange={(e) => setDraft(e.target.value)}
+          onChange={onDraftChange}
           onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && (e.preventDefault(), submit())}
           placeholder="Write something..."
           className="flex-1 bg-card border border-border rounded-full px-4 py-2.5 text-[13px] font-['Inter'] outline-none focus:border-terracotta transition-colors placeholder:text-muted-foreground/50"
@@ -127,6 +183,22 @@ function ConversationView({ convId, onBack }: { convId: string; onBack: () => vo
           <Send size={14} />
         </motion.button>
       </div>
+    </div>
+  );
+}
+
+// Subtle animated dots for typing indicator
+function TypingDots() {
+  return (
+    <div className="flex items-center gap-[3px]">
+      {[0, 1, 2].map((i) => (
+        <motion.div
+          key={i}
+          className="w-[4px] h-[4px] rounded-full bg-terracotta"
+          animate={{ opacity: [0.3, 1, 0.3], y: [0, -2, 0] }}
+          transition={{ duration: 0.8, repeat: Infinity, delay: i * 0.15, ease: "easeInOut" }}
+        />
+      ))}
     </div>
   );
 }
