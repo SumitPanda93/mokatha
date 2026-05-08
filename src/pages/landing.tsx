@@ -134,26 +134,38 @@ export default function Landing({ onBrowse }: Props) {
         </div>
       </motion.div>
 
-      {/* ── Scrolling preview strip (decorative) ── */}
+      {/* ── Creator platform statement ── */}
       <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ delay: 0.7, duration: 0.8 }}
-        className="flex gap-2.5 px-6 pb-6 overflow-x-auto no-scrollbar"
-        style={{ maskImage: "linear-gradient(to right, transparent, black 20%, black 80%, transparent)" }}
+        initial={{ opacity: 0, y: 6 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.72, duration: 1.0, ease: "easeOut" }}
+        className="flex items-center justify-center gap-0 pb-8 px-6"
       >
-        {[
-          { kind: "voice", label: "Odia Kavita", color: "#C9A84C" },
-          { kind: "story", label: "Short Story", color: "#9B6FD8" },
-          { kind: "reel",  label: "Spoken Word", color: "#F76A4A" },
-          { kind: "text",  label: "Essay",       color: "#6DB89C" },
-          { kind: "voice", label: "Folk Song",   color: "#C9A84C" },
-        ].map((item, i) => (
-          <div key={i}
-            className="shrink-0 rounded-xl px-4 py-2.5 text-[10px] font-['Inter'] tracking-[0.12em] uppercase"
-            style={{ background: `${item.color}18`, border: `1px solid ${item.color}35`, color: item.color }}>
-            {item.label}
-          </div>
+        {(["EXPLORE", "EXPRESS", "EARN"] as const).map((word, i) => (
+          <span key={word} className="flex items-center">
+            <span
+              className="text-[11px] font-['Inter'] font-semibold tracking-[0.32em]"
+              style={{
+                background: i === 1
+                  ? "linear-gradient(90deg, #C9A84C 0%, #F76A4A 100%)"
+                  : "none",
+                WebkitBackgroundClip: i === 1 ? "text" : undefined,
+                WebkitTextFillColor: i === 1 ? "transparent" : undefined,
+                color: i === 1 ? undefined : "rgba(245,243,239,0.38)",
+              }}
+            >
+              {word}
+            </span>
+            {i < 2 && (
+              <span
+                className="mx-3 text-[6px] rounded-full"
+                style={{ color: "rgba(201,168,76,0.45)", letterSpacing: 0 }}
+                aria-hidden
+              >
+                ●
+              </span>
+            )}
+          </span>
         ))}
       </motion.div>
 
