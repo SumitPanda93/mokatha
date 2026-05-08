@@ -185,7 +185,6 @@ export default function MehfilRoom() {
   const livekitRef  = useRef<LKRoom | null>(null);
   const [lkConnState, setLkConnState] = useState<ConnectionState | null>(null);
   const [audioBlocked, setAudioBlocked] = useState(false);
-  const [reconnecting, setReconnecting] = useState(false);
 
   const isHost        = !!me && !!mehfil && me === mehfil.hostId;
   const activeSpeaker = queue.find((q) => q.status === "speaking");
@@ -196,16 +195,23 @@ export default function MehfilRoom() {
     ? presence.find((p) => p.user_id === activeSpeaker.userId)
     : null;
 
+  // ── Derived audio connection state ────────────────────────────────────────
+  const lkConnecting = isLiveKitConfigured() && joined && (
+    !lkConnState || lkConnState === ConnectionState.Connecting
+  );
+  const lkConnected = lkConnState === ConnectionState.Connected;
+  const lkReconnecting = lkConnState === ConnectionState.Reconnecting;
+
   // ── Auto-enable mic when approved as speaker ──────────────────────────────
   useEffect(() => {
     if (!livekitRef.current) return;
     if (myEntry?.status === "speaking") {
       livekitRef.current.setMicEnabled(true);
-      setMuted(false);
+      setMuted(false);   // mic is ON → muted = false ✓
       toast.success("🎙️ You're now speaking!", { duration: 3000 });
     } else if (myEntry?.status === "done" || myEntry?.status === "rejected") {
       livekitRef.current.setMicEnabled(false);
-      setMuted(false);
+      setMuted(true);    // mic is OFF → muted = true ✓ (was false — bug fixed)
     }
   }, [myEntry?.status]);
 
@@ -240,12 +246,11 @@ export default function MehfilRoom() {
           setAudioBlocked(true);
         },
         onReconnecting: () => {
-          setReconnecting(true);
-          toast("Reconnecting to Mehfil audio…", { duration: 2500 });
+          // lkConnState will be set to Reconnecting via onConnectionStateChange
+          toast("Reconnecting to Mehfil audio…", { duration: 2000 });
         },
         onReconnected: () => {
-          setReconnecting(false);
-          toast.success("Audio reconnected", { duration: 2000 });
+          toast.success("Audio reconnected ✓", { duration: 1800 });
         },
       }).then((room) => {
         if (room) livekitRef.current = room;
@@ -459,34 +464,33 @@ export default function MehfilRoom() {
           style={{ background: "radial-gradient(circle,#E8B14A,transparent 70%)", filter: "blur(50px)" }} />
       </div>
 
-      {/* Audio blocked banner — tap anywhere to enable audio on mobile */}
-      <AnimatePresence>
+      {/* ── Connection state banners ────────────────────────────────────── */}
+      <AnimatePresence mode="wait">
         {audioBlocked && (
-          <motion.button
-            initial={{ opacity: 0, y: -8 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -8 }}
-            onClick={() => {
-              livekitRef.current?.enableAudio();
-              setAudioBlocked(false);
-            }}
-            className="relative z-50 mx-5 mt-2 w-auto rounded-full flex items-center justify-center gap-2 py-2 px-4 text-[12px] font-['Inter']"
-            style={{ background: "rgba(232,177,74,0.15)", border: "1px solid rgba(232,177,74,0.35)", color: "#E8B14A" }}
+          <motion.button key="audio-blocked"
+            initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }}
+            onClick={() => { livekitRef.current?.enableAudio(); setAudioBlocked(false); }}
+            className="relative z-50 mx-5 mt-2 rounded-2xl flex items-center justify-center gap-2 py-2.5 px-4 text-[12px] font-['Inter'] font-medium"
+            style={{ background: "rgba(232,177,74,0.14)", border: "1px solid rgba(232,177,74,0.30)", color: "#E8B14A" }}
           >
             <Mic size={13} /> Tap to enable audio
           </motion.button>
         )}
-      </AnimatePresence>
-
-      {/* Reconnecting indicator */}
-      <AnimatePresence>
-        {reconnecting && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="relative z-50 mx-5 mt-1 rounded-full flex items-center justify-center gap-2 py-1.5 px-4 text-[11px] font-['Inter']"
-            style={{ background: "rgba(247,106,74,0.12)", border: "1px solid rgba(247,106,74,0.25)", color: "#F76A4A" }}
+        {!audioBlocked && lkConnecting && (
+          <motion.div key="connecting"
+            initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }}
+            className="relative z-50 mx-5 mt-2 rounded-2xl flex items-center justify-center gap-2 py-2 px-4 text-[11px] font-['Inter']"
+            style={{ background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.10)", color: "rgba(245,243,239,0.55)" }}
+          >
+            <div className="w-1.5 h-1.5 rounded-full bg-current animate-pulse" />
+            Connecting audio…
+          </motion.div>
+        )}
+        {!audioBlocked && lkReconnecting && (
+          <motion.div key="reconnecting"
+            initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }}
+            className="relative z-50 mx-5 mt-2 rounded-2xl flex items-center justify-center gap-2 py-2 px-4 text-[11px] font-['Inter']"
+            style={{ background: "rgba(247,106,74,0.10)", border: "1px solid rgba(247,106,74,0.22)", color: "#F76A4A" }}
           >
             <div className="w-1.5 h-1.5 rounded-full bg-current animate-pulse" />
             Reconnecting…
@@ -513,6 +517,11 @@ export default function MehfilRoom() {
             </div>
           )}
           {mehfil.isLive ? "LIVE" : "UPCOMING"}
+          {/* Audio ready dot — only when LiveKit is configured and joined */}
+          {isLiveKitConfigured() && joined && (
+            <span className="w-1.5 h-1.5 rounded-full ml-0.5"
+              style={{ background: lkConnected ? "#6BE89E" : lkReconnecting ? "#E8B14A" : "rgba(255,255,255,0.3)" }} />
+          )}
         </div>
 
         {isHost ? (

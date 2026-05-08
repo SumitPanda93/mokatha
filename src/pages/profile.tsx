@@ -244,8 +244,15 @@ export default function Profile() {
       <div className="px-5 mt-4 grid grid-cols-2 gap-3 pb-10">
         {displayed.map((p) => <ProfilePostCard key={p.id} post={p} />)}
         {displayed.length === 0 && (
-          <div className="col-span-2 py-12 text-center text-muted-foreground font-['Playfair_Display'] italic text-[14px]">
-            {tab === "saved" ? "No saved works yet." : "Nothing published yet."}
+          <div className="col-span-2 py-14 text-center flex flex-col items-center gap-2">
+            <div className="font-['Playfair_Display'] text-[16px] italic text-muted-foreground">
+              {tab === "saved" ? "Nothing saved yet." : "No works published yet."}
+            </div>
+            <div className="text-[12px] text-muted-foreground/60 font-['Inter']">
+              {tab === "saved"
+                ? "Stories you bookmark will live here."
+                : "Your voice deserves to be heard."}
+            </div>
           </div>
         )}
       </div>

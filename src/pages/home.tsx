@@ -61,7 +61,12 @@ function VoiceCard({ post, onTip }: { post: Post; onTip: () => void }) {
     : null;
 
   return (
-    <div className="rounded-2xl overflow-hidden shadow-md">
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ type: "spring", damping: 24, stiffness: 200 }}
+      className="rounded-2xl overflow-hidden shadow-md"
+    >
       {/* Hero area */}
       <Link href={`/post/${post.id}`} className="relative block h-[192px] overflow-hidden">
         {post.coverUrl
@@ -127,7 +132,7 @@ function VoiceCard({ post, onTip }: { post: Post; onTip: () => void }) {
           <Bookmark size={14} fill={saved ? "currentColor" : "none"} />
         </button>
       </div>
-    </div>
+    </motion.div>
   );
 }
 
@@ -142,7 +147,12 @@ function TextCard({ post, onTip }: { post: Post; onTip: () => void }) {
   const accent = isStory ? "hsl(var(--violet))" : "hsl(var(--sage))";
 
   return (
-    <div className="rounded-2xl overflow-hidden bg-card border border-border/60">
+    <motion.div
+      initial={{ opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ type: "spring", damping: 24, stiffness: 200 }}
+      className="rounded-2xl overflow-hidden bg-card border border-border/60"
+    >
       {/* Cover image (optional) */}
       {post.coverUrl && (
         <Link href={`/post/${post.id}`} className="block relative">
@@ -215,7 +225,7 @@ function TextCard({ post, onTip }: { post: Post; onTip: () => void }) {
           </button>
         </div>
       </div>
-    </div>
+    </motion.div>
   );
 }
 

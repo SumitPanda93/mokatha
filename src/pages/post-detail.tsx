@@ -253,6 +253,13 @@ export default function PostDetail() {
     if (post && me && !isAuthor) earnPts.mutate({ userId: me, points: 5 });
   }, [post?.id]);
 
+  // Reels: auto-start playback on entry (mirrors the immersive card experience)
+  useEffect(() => {
+    if (post?.kind === "reel" && post.audioUrl && !locked) {
+      toggleAudio();
+    }
+  }, [post?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
   if (!post) return <div className="p-10 text-center text-muted-foreground">Loading…</div>;
 
   const isAudio = post.kind === "voice" || post.kind === "reel";
@@ -289,36 +296,86 @@ export default function PostDetail() {
       </div>
 
       {/* ── Cover / hero ── */}
-      <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="px-5">
-        <div className="relative rounded-2xl overflow-hidden">
+      {post.kind === "reel" ? (
+        /* ── Reel: cinematic full-height canvas ── */
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.4 }}
+          className="relative overflow-hidden mx-0"
+          style={{ aspectRatio: "4/5" }}
+        >
           {post.coverUrl
-            ? <img src={post.coverUrl} alt="" className={`w-full aspect-[16/10] object-cover ${locked ? "blur-sm" : ""}`} />
-            : <div className="w-full aspect-[16/10]" style={{ background: kindGradient(post.kind) }} />
+            ? <img src={post.coverUrl} alt="" className={`absolute inset-0 w-full h-full object-cover ${locked ? "blur-sm" : ""}`} />
+            : <div className="absolute inset-0" style={{ background: kindGradient(post.kind) }} />
           }
-          <div className="absolute inset-0 bg-gradient-to-t from-black/65 via-transparent to-transparent" />
-
-          {/* Play button overlay for audio posts */}
+          {/* Multi-layer cinematic gradient */}
+          <div className="absolute inset-0" style={{
+            background: "linear-gradient(to bottom, rgba(0,0,0,0.08) 0%, rgba(0,0,0,0.02) 25%, rgba(0,0,0,0.55) 65%, rgba(0,0,0,0.92) 100%)"
+          }} />
+          {/* Play button — premium minimal */}
           {isAudio && !locked && (
             <button onClick={toggleAudio}
               className="absolute inset-0 flex items-center justify-center"
               aria-label={playing ? "Pause" : "Play"}>
-              <motion.div whileTap={{ scale: 0.92 }}
-                className="w-[60px] h-[60px] rounded-full flex items-center justify-center"
-                style={{ background: "rgba(255,255,255,0.92)", boxShadow: "0 8px 32px rgba(0,0,0,0.4)" }}>
+              <motion.div whileTap={{ scale: 0.88 }}
+                animate={{ scale: playing ? 1 : 1 }}
+                className="flex items-center justify-center"
+                style={{ width: 64, height: 64, borderRadius: "50%", background: "rgba(255,255,255,0.15)", backdropFilter: "blur(12px)", border: "1.5px solid rgba(255,255,255,0.35)", boxShadow: "0 8px 32px rgba(0,0,0,0.4)" }}>
                 {playing
-                  ? <Pause size={22} className="text-foreground" />
-                  : <Play size={22} className="text-foreground ml-0.5" fill="currentColor" />
+                  ? <Pause size={22} className="text-white" />
+                  : <Play size={22} className="text-white ml-1" fill="white" />
                 }
               </motion.div>
             </button>
           )}
-
-          <div className="absolute bottom-0 left-0 right-0 p-5">
-            <div className="text-[11px] uppercase tracking-[0.18em] text-white/70 mb-1">{post.tags[0]}</div>
-            <div className="font-['Playfair_Display'] text-[26px] leading-tight text-white">{post.title}</div>
+          {/* Bottom title block */}
+          <div className="absolute bottom-0 left-0 right-0 px-5 pb-5">
+            <div className="text-[9px] font-['Inter'] tracking-[0.28em] uppercase mb-2"
+              style={{ color: "rgba(255,255,255,0.50)" }}>{post.tags[0]}</div>
+            <div className="font-['Playfair_Display'] text-[26px] leading-[1.2] text-white italic"
+              style={{ textShadow: "0 2px 16px rgba(0,0,0,0.6)" }}>
+              {post.title}
+            </div>
           </div>
-        </div>
-      </motion.div>
+          {/* Kind badge */}
+          <div className="absolute top-4 left-4">
+            <span className="text-[8px] font-['Inter'] tracking-[0.28em] uppercase px-2.5 py-1 rounded-full font-semibold backdrop-blur-md"
+              style={{ background: "rgba(155,89,182,0.75)", color: "#fff" }}>
+              Reel
+            </span>
+          </div>
+        </motion.div>
+      ) : (
+        /* ── Other kinds: standard padded hero ── */
+        <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="px-5">
+          <div className="relative rounded-2xl overflow-hidden">
+            {post.coverUrl
+              ? <img src={post.coverUrl} alt="" className={`w-full aspect-[16/10] object-cover ${locked ? "blur-sm" : ""}`} />
+              : <div className="w-full aspect-[16/10]" style={{ background: kindGradient(post.kind) }} />
+            }
+            <div className="absolute inset-0 bg-gradient-to-t from-black/65 via-transparent to-transparent" />
+            {isAudio && !locked && (
+              <button onClick={toggleAudio}
+                className="absolute inset-0 flex items-center justify-center"
+                aria-label={playing ? "Pause" : "Play"}>
+                <motion.div whileTap={{ scale: 0.92 }}
+                  className="w-[60px] h-[60px] rounded-full flex items-center justify-center"
+                  style={{ background: "rgba(255,255,255,0.92)", boxShadow: "0 8px 32px rgba(0,0,0,0.4)" }}>
+                  {playing
+                    ? <Pause size={22} className="text-foreground" />
+                    : <Play size={22} className="text-foreground ml-0.5" fill="currentColor" />
+                  }
+                </motion.div>
+              </button>
+            )}
+            <div className="absolute bottom-0 left-0 right-0 p-5">
+              <div className="text-[11px] uppercase tracking-[0.18em] text-white/70 mb-1">{post.tags[0]}</div>
+              <div className="font-['Playfair_Display'] text-[26px] leading-tight text-white">{post.title}</div>
+            </div>
+          </div>
+        </motion.div>
+      )}
 
       {/* ── Author strip ── */}
       {author && (

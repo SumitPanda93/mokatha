@@ -1473,12 +1473,23 @@ export function useFollow() {
   });
 }
 
+function invalidateWallet(qc: ReturnType<typeof useQueryClient>) {
+  const me = getCurrentUserId() ?? "";
+  if (!me) return;
+  qc.invalidateQueries({ queryKey: QK.walletBalance(me) });
+  qc.invalidateQueries({ queryKey: QK.transactions(me) });
+}
+
 export function useTip(scope: "post" | "mehfil") {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (vars: { id: string; amount: number }) =>
       scope === "post" ? tipPost(vars.id, vars.amount) : tipMehfil(vars.id, vars.amount),
-    onSuccess: () => { qc.invalidateQueries(); toast.success("Tip sent"); },
+    onSuccess: () => {
+      invalidateWallet(qc);
+      qc.invalidateQueries({ queryKey: QK.posts });
+      toast.success("Tip sent");
+    },
     onError: () => toast.error("Insufficient balance"),
   });
 }
@@ -1495,7 +1506,11 @@ export function useWithdraw() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (vars: { amount: number; method: string }) => withdraw(vars.amount, vars.method),
-    onSuccess: () => { qc.invalidateQueries(); toast.success("Withdrawal requested"); },
+    onSuccess: () => {
+      invalidateWallet(qc);
+      toast.success("Withdrawal requested");
+    },
+    onError: (e: Error) => toast.error(e.message ?? "Withdrawal failed"),
   });
 }
 
@@ -2151,7 +2166,8 @@ export function useSendSupport() {
       postId?: string; mehfilId?: string;
     }) => sendSupportAction(vars.toUserId, vars.actionType, vars.amount, vars.postId, vars.mehfilId),
     onSuccess: (_d, vars) => {
-      qc.invalidateQueries();
+      invalidateWallet(qc);
+      qc.invalidateQueries({ queryKey: ["adminConfig"] }); // refresh limits
       // Earn ink for appreciating a creator
       const me = getCurrentUserId();
       if (me) earnInkPoints(me, 5).catch(console.warn);

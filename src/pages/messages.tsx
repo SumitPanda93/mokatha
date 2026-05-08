@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { useLocation, useSearch } from "wouter";
-import { ArrowLeft, Send, Search } from "lucide-react";
+import { ArrowLeft, Send, Search, MessageCircle } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useTitle } from "@/hooks/useTitle";
 import {
@@ -221,7 +221,7 @@ export default function Messages() {
     <div className="min-h-screen w-full bg-background flex flex-col">
       {/* Show conversation view on mobile when one is selected */}
       {activeConvId ? (
-        <div className="flex flex-col h-screen">
+        <div className="flex flex-col" style={{ height: "100dvh" }}>
           <ConversationView convId={activeConvId} onBack={() => setActiveConvId(null)} />
         </div>
       ) : (
@@ -242,8 +242,14 @@ export default function Messages() {
 
           <div className="flex-1 overflow-y-auto no-scrollbar">
             {filtered.length === 0 ? (
-              <div className="py-16 text-center text-muted-foreground font-['Playfair_Display'] italic text-[14px]">
-                No conversations yet.
+              <div className="flex flex-col items-center justify-center py-24 px-8 text-center">
+                <div className="w-14 h-14 rounded-2xl bg-muted flex items-center justify-center mb-4">
+                  <MessageCircle size={24} className="text-muted-foreground" />
+                </div>
+                <div className="font-['Playfair_Display'] text-[18px] mb-2">No conversations yet</div>
+                <div className="text-[13px] text-muted-foreground leading-relaxed">
+                  Write to a creator you love.<br />Every story begins with a hello.
+                </div>
               </div>
             ) : (
               filtered.map((conv) => (

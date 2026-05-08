@@ -187,53 +187,57 @@ function CreateSheet({ onClose, navigate }: { onClose: () => void; navigate: (pa
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
+      transition={{ duration: 0.18 }}
     >
       {/* Backdrop */}
-      <motion.div
+      <div
         className="absolute inset-0"
-        style={{ background: "rgba(0,0,0,0.55)", backdropFilter: "blur(12px)" }}
+        style={{ background: "rgba(0,0,0,0.60)", backdropFilter: "blur(16px)" }}
         onClick={onClose}
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
       />
 
-      {/* Sheet */}
+      {/* Sheet — tighter spring for snappier feel */}
       <motion.div
         initial={{ y: "100%" }}
         animate={{ y: 0 }}
         exit={{ y: "100%" }}
-        transition={{ type: "spring", damping: 28, stiffness: 300 }}
-        className="relative rounded-t-[28px] bg-background/95 backdrop-blur-xl border-t border-white/8 px-5 pt-5"
-        style={{ paddingBottom: "max(env(safe-area-inset-bottom), 24px)" }}
+        transition={{ type: "spring", damping: 26, stiffness: 340, mass: 0.9 }}
+        className="relative rounded-t-[32px] bg-background/96 backdrop-blur-2xl border-t border-border/60 px-5 pt-4"
+        style={{ paddingBottom: "max(env(safe-area-inset-bottom), 28px)" }}
       >
         {/* Drag handle */}
-        <div className="w-9 h-1 rounded-full bg-border mx-auto mb-5" />
+        <div className="w-10 h-[3px] rounded-full bg-border/80 mx-auto mb-4" />
 
-        {/* Close */}
-        <button onClick={onClose}
-          className="absolute top-4 right-4 w-8 h-8 rounded-full bg-muted flex items-center justify-center">
-          <XIcon size={14} className="text-muted-foreground" />
-        </button>
+        {/* Header */}
+        <div className="flex items-start justify-between mb-4">
+          <div>
+            <div className="font-['Playfair_Display'] text-[23px] leading-none">Create</div>
+            <div className="text-[11px] text-muted-foreground font-['Inter'] mt-1 tracking-[0.02em]">
+              What will you make today?
+            </div>
+          </div>
+          <motion.button whileTap={{ scale: 0.9 }} onClick={onClose}
+            className="w-8 h-8 rounded-full bg-muted/80 flex items-center justify-center mt-0.5">
+            <XIcon size={13} className="text-muted-foreground" />
+          </motion.button>
+        </div>
 
-        <div className="font-['Playfair_Display'] text-[22px] mb-1">Create</div>
-        <div className="text-[12px] text-muted-foreground font-['Inter'] mb-5">What are you making today?</div>
-
-        <div className="grid grid-cols-2 gap-3 mb-4">
+        <div className="grid grid-cols-2 gap-2.5 mb-2">
           {CREATE_ACTIONS.map((a, i) => (
             <motion.button
               key={a.id}
-              initial={{ opacity: 0, y: 16 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: i * 0.05 }}
-              whileTap={{ scale: 0.95 }}
+              initial={{ opacity: 0, scale: 0.94, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              transition={{ delay: i * 0.04, type: "spring", damping: 20, stiffness: 260 }}
+              whileTap={{ scale: 0.93 }}
               onClick={() => { onClose(); navigate(a.path); }}
-              className="flex items-center gap-3 px-4 py-4 rounded-2xl text-left"
-              style={{ background: `${a.color}0F`, border: `1px solid ${a.color}28` }}
+              className="flex items-center gap-3 px-4 py-3.5 rounded-2xl text-left active:opacity-80 transition-opacity"
+              style={{ background: `${a.color}0E`, border: `1px solid ${a.color}25` }}
             >
-              <span className="text-[24px] leading-none">{a.emoji}</span>
-              <div>
-                <div className="text-[13px] font-['Inter'] font-medium text-foreground">{a.label}</div>
-                <div className="text-[10px] text-muted-foreground mt-0.5">{a.sublabel}</div>
+              <span className="text-[26px] leading-none shrink-0">{a.emoji}</span>
+              <div className="min-w-0">
+                <div className="text-[13px] font-['Inter'] font-semibold text-foreground leading-tight">{a.label}</div>
+                <div className="text-[10px] text-muted-foreground mt-0.5 leading-tight truncate">{a.sublabel}</div>
               </div>
             </motion.button>
           ))}
@@ -268,9 +272,9 @@ export default function MobileShell({ children }: MobileShellProps) {
   const navContentHeight = 72;
 
   return (
-    <div className="w-full bg-background text-foreground">
+    <div className="w-full bg-background text-foreground" style={{ minHeight: "100dvh" }}>
       {/* Main content — bottom padding accounts for fixed nav + optional mini player */}
-      <div style={{ paddingBottom: `calc(${navContentHeight}px + ${track ? "68px + " : ""}max(env(safe-area-inset-bottom), 0px) + 8px)` }}>
+      <div style={{ paddingBottom: `calc(${navContentHeight}px + ${track ? "76px + " : ""}max(env(safe-area-inset-bottom), 8px))` }}>
         {children}
       </div>
 
