@@ -7,7 +7,7 @@ import { signInWithGoogle, sendPhoneOtp, verifyPhoneOtp } from "@/lib/store";
 // ─── Literary quotes that rotate ─────────────────────────────────────────────
 const QUOTES = [
   { text: "Every voice deserves a page.", lang: "en" },
-  { text: "ଶବ୍ଦ ଯାହା ରୁହ, ଭଲ ପାଇ ରୁହ।", lang: "or" },
+  { text: "କଥାଟିଏ କହୁଁ , କଥାଟିଏ !", lang: "or" },
   { text: "Stories that breathe. Voices that last.", lang: "en" },
 ];
 const quote = QUOTES[Math.floor(Date.now() / 86400000) % QUOTES.length];
