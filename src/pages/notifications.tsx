@@ -169,8 +169,10 @@ export default function Notifications() {
             <div className="w-14 h-14 rounded-full bg-muted flex items-center justify-center mx-auto mb-4">
               <Bell size={22} className="text-muted-foreground" />
             </div>
-            <div className="font-['Playfair_Display'] text-[18px] mb-1">All quiet here</div>
-            <div className="text-[13px] text-muted-foreground">Notifications will appear when someone interacts with your content.</div>
+            <div className="font-['Playfair_Display'] text-[18px] mb-1">Quiet for now</div>
+            <div className="text-[13px] text-muted-foreground leading-relaxed max-w-xs mx-auto">
+              When someone appreciates your words or joins your room, a gentle note will land here.
+            </div>
           </div>
         ) : (
           <div className="space-y-6">

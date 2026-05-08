@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Link, useParams, useLocation } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
 import { ArrowLeft, MoreHorizontal, Heart, MessageCircle, Play, Check, Star, X, Mic, FileText, BookOpen, Clapperboard, Mail } from "lucide-react";
@@ -11,6 +11,7 @@ import {
 } from "@/lib/store";
 import SupportSheet from "@/components/SupportSheet";
 import AudioLetterRecorder from "@/components/AudioLetterRecorder";
+import { trackEvent } from "@/lib/analytics";
 
 // ─── Kind gradient fallback ───────────────────────────────────────────────────
 
@@ -133,6 +134,13 @@ export default function UserProfile() {
   const { data: following = false } = useIsFollowing(me ?? "", user?.id ?? "");
   const { data: subscribed = false } = useIsSubscribedTo(me ?? "", user?.id ?? "");
   const { data: walletBalance = 0 } = useWalletBalance(me);
+
+  useEffect(() => {
+    const uid = user?.id;
+    const self = getCurrentUserId();
+    if (!uid || !self || uid === self) return;
+    trackEvent("creator_profile_open", { creator_id: uid });
+  }, [user?.id]);
 
   if (!user) return <div className="p-10 text-center text-muted-foreground">User not found.</div>;
 

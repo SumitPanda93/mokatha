@@ -82,6 +82,12 @@ function VoiceCard({ post, onTip }: { post: Post; onTip: () => void }) {
             <span className="text-[9px] font-['Inter'] tracking-[0.2em] uppercase px-2.5 py-1 rounded-full font-semibold bg-ochre/90 text-white backdrop-blur-sm">
               Voice
             </span>
+            {post.tags?.includes("mehfil-replay") && (
+              <span className="text-[8px] font-['Inter'] tracking-[0.18em] uppercase px-2 py-0.5 rounded-full font-semibold backdrop-blur-sm"
+                style={{ background: "rgba(107,232,158,0.35)", color: "#E8FFE8", border: "1px solid rgba(107,232,158,0.45)" }}>
+                Replay
+              </span>
+            )}
             <AccessBadge post={post} />
           </div>
           {dur && (

@@ -6,6 +6,7 @@ import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Check } from "lucide-react";
 import { useSendSupport, useWalletBalance, useAdminConfig, SupportActionKind, getCurrentUserId } from "@/lib/store";
+import { trackEvent } from "@/lib/analytics";
 
 // ─── Action definitions ───────────────────────────────────────────────────────
 
@@ -49,6 +50,13 @@ export default function SupportSheet({
   const handleSend = async () => {
     if (!canSend) return;
     await send.mutateAsync({ toUserId, actionType: action, amount, postId, mehfilId });
+    trackEvent("support_action", {
+      action,
+      amount,
+      post_id: postId ?? "",
+      mehfil_id: mehfilId ?? "",
+      to_user_id: toUserId,
+    });
     setDone(true);
     setTimeout(onClose, 1800);
   };

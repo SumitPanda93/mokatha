@@ -114,6 +114,7 @@ export async function connectToMehfil(
 
   room.on(RoomEvent.TrackSubscribed, (track: RemoteTrack, _pub, _participant: RemoteParticipant) => {
     if (track.kind === Track.Kind.Audio) {
+      void room.startAudio().catch(() => {});
       const el = track.attach() as HTMLAudioElement;
       el.volume = 1;
       // ID the element for targeted cleanup
@@ -164,6 +165,7 @@ export async function connectToMehfil(
 
   room.on(RoomEvent.Reconnected, () => {
     callbacks.onReconnected?.();
+    void room.startAudio().catch(() => {});
     // Resume any paused audio elements after reconnect
     audioElements.forEach((el) => {
       if (el.paused && el.src) tryPlay(el);
@@ -188,6 +190,8 @@ export async function connectToMehfil(
   try {
     await room.connect(LIVEKIT_URL, token);
     console.log(`[LiveKit] connected to room ${roomId} as ${userId}`);
+    // Helps listeners hear remote audio on mobile Safari / Chrome autoplay rules
+    await room.startAudio().catch(() => {});
   } catch (err) {
     console.error("[LiveKit] connect error", err);
     callbacks.onError?.(err instanceof Error ? err : new Error(String(err)));

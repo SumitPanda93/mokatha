@@ -160,6 +160,11 @@ export default function CreateVoice() {
         <div className="w-9" />
       </div>
 
+      <div className="px-6 pb-3">
+        <p className="text-center text-[13px] font-['Playfair_Display'] italic text-muted-foreground/90 leading-snug">
+          Take a breath — then let the room hear you.
+        </p>
+      </div>
       {/* Mic visualizer */}
       <div className="px-6 mt-4">
         <div className="rounded-3xl p-8 text-center" style={{ background: "linear-gradient(135deg, hsl(var(--wine)) 0%, #2A1018 100%)", color: "#F5F3EF" }}>

@@ -46,6 +46,8 @@ export type Post = {
   minTip?: number;
   hidden?: boolean;
   isPrivate?: boolean;
+  /** Originating Mehfil when this post is a replay or derived session */
+  sourceMehfilId?: string;
 };
 
 export type Comment = {
@@ -233,6 +235,7 @@ function mapPost(p: any): Post {
     isPrivate: p.is_private ?? false,
     liked: p.liked,
     saved: p.saved,
+    sourceMehfilId: p.source_mehfil_id ?? undefined,
   };
 }
 
@@ -965,6 +968,8 @@ export async function addPost(post: Omit<Post, "id" | "createdAt" | "likes" | "c
   if (post.coverUrl != null) row.cover_url = post.coverUrl;
   if (post.durationSec != null) row.duration_sec = post.durationSec;
   if (post.minTip != null) row.min_tip = post.minTip;
+  if (post.isPrivate === true) row.is_private = true;
+  if (post.sourceMehfilId != null) row.source_mehfil_id = post.sourceMehfilId;
   console.log("[mk:addPost] inserting", { row, authId });
   const { data, error } = await supabase.from("posts").insert(row).select().maybeSingle();
   if (error) {
@@ -973,6 +978,154 @@ export async function addPost(post: Omit<Post, "id" | "createdAt" | "likes" | "c
   }
   console.log("[mk:addPost] OK", data);
   return { ...post, id, createdAt: created_at, likes: 0, comments: 0, tipsTotal: 0 };
+}
+
+// ─── Mehfil replay (draft → publish as voice post + tag) ───────────────────────
+
+export type MehfilReplayRow = {
+  id: string;
+  mehfilId: string;
+  hostId: string;
+  audioUrl: string;
+  title: string;
+  coverUrl?: string;
+  durationSec?: number;
+  postId?: string;
+  published: boolean;
+  isPrivate: boolean;
+  deleted: boolean;
+  createdAt: string;
+};
+
+function mapMehfilReplayRow(r: Record<string, unknown>): MehfilReplayRow {
+  return {
+    id: r.id as string,
+    mehfilId: r.mehfil_id as string,
+    hostId: r.host_id as string,
+    audioUrl: r.audio_url as string,
+    title: (r.title as string) ?? "",
+    coverUrl: (r.cover_url as string) ?? undefined,
+    durationSec: (r.duration_sec as number) ?? undefined,
+    postId: (r.post_id as string) ?? undefined,
+    published: Boolean(r.published),
+    isPrivate: Boolean(r.is_private),
+    deleted: Boolean(r.deleted),
+    createdAt: r.created_at as string,
+  };
+}
+
+export async function getPublishedMehfilReplay(mehfilId: string): Promise<MehfilReplayRow | null> {
+  const { data, error } = await supabase
+    .from("mehfil_replays")
+    .select("*")
+    .eq("mehfil_id", mehfilId)
+    .eq("published", true)
+    .eq("deleted", false)
+    .maybeSingle();
+  if (error || !data) return null;
+  return mapMehfilReplayRow(data as Record<string, unknown>);
+}
+
+export async function upsertMehfilReplayDraft(vars: {
+  mehfilId: string;
+  audioUrl: string;
+  title: string;
+  coverUrl?: string;
+  durationSec?: number;
+  isPrivate: boolean;
+}): Promise<MehfilReplayRow> {
+  const me = getCurrentUserId();
+  if (!me) throw new Error("not_authenticated");
+  const { data: mf } = await supabase.from("mehfils").select("host_id").eq("id", vars.mehfilId).maybeSingle();
+  if (!mf || mf.host_id !== me) throw new Error("not_host");
+
+  const { data: existing } = await supabase
+    .from("mehfil_replays")
+    .select("*")
+    .eq("mehfil_id", vars.mehfilId)
+    .eq("host_id", me)
+    .eq("published", false)
+    .eq("deleted", false)
+    .maybeSingle();
+
+  const payload = {
+    audio_url: vars.audioUrl,
+    title: vars.title.trim() || "Mehfil replay",
+    cover_url: vars.coverUrl ?? null,
+    duration_sec: vars.durationSec ?? null,
+    is_private: vars.isPrivate,
+  };
+
+  if (existing) {
+    const { data, error } = await supabase.from("mehfil_replays").update(payload).eq("id", existing.id).select().maybeSingle();
+    if (error || !data) throw new Error(error?.message ?? "update_failed");
+    return mapMehfilReplayRow(data as Record<string, unknown>);
+  }
+
+  const id = `mr${uid()}`;
+  const { data, error } = await supabase
+    .from("mehfil_replays")
+    .insert({
+      id,
+      mehfil_id: vars.mehfilId,
+      host_id: me,
+      ...payload,
+      published: false,
+      deleted: false,
+      post_id: null,
+    })
+    .select()
+    .maybeSingle();
+  if (error || !data) throw new Error(error?.message ?? "insert_failed");
+  return mapMehfilReplayRow(data as Record<string, unknown>);
+}
+
+export async function publishMehfilReplay(replayId: string): Promise<Post> {
+  const me = getCurrentUserId();
+  if (!me) throw new Error("not_authenticated");
+  const { data: r, error: fetchErr } = await supabase.from("mehfil_replays").select("*").eq("id", replayId).maybeSingle();
+  if (fetchErr || !r || r.host_id !== me) throw new Error("not_found");
+  if (r.published && r.post_id) throw new Error("already_published");
+
+  const post = await addPost({
+    kind: "voice",
+    authorId: me,
+    title: r.title || "Mehfil replay",
+    body: "",
+    audioUrl: r.audio_url,
+    coverUrl: r.cover_url ?? undefined,
+    durationSec: r.duration_sec ?? undefined,
+    language: "or",
+    tags: ["mehfil-replay"],
+    accessType: "free",
+    isPrivate: Boolean(r.is_private),
+    sourceMehfilId: r.mehfil_id,
+  });
+
+  const { error: upErr } = await supabase
+    .from("mehfil_replays")
+    .update({ published: true, post_id: post.id })
+    .eq("id", replayId);
+  if (upErr) throw new Error(upErr.message);
+  return post;
+}
+
+export async function deleteMehfilReplay(replayId: string): Promise<void> {
+  const me = getCurrentUserId();
+  if (!me) throw new Error("not_authenticated");
+  const { data: r } = await supabase.from("mehfil_replays").select("host_id,post_id").eq("id", replayId).maybeSingle();
+  if (!r || r.host_id !== me) throw new Error("not_found");
+  if (r.post_id) await supabase.from("posts").delete().eq("id", r.post_id);
+  await supabase.from("mehfil_replays").delete().eq("id", replayId);
+}
+
+export function usePublishedMehfilReplay(mehfilId: string) {
+  return useQuery({
+    queryKey: ["mehfilReplayPublished", mehfilId] as const,
+    queryFn: () => getPublishedMehfilReplay(mehfilId),
+    enabled: !!mehfilId,
+    staleTime: 15_000,
+  });
 }
 
 export async function updateUser(userId: string, patch: Partial<User>): Promise<void> {

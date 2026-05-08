@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useRef, useState, useCallback, useEffect } from "react";
+import { trackEvent } from "@/lib/analytics";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -10,6 +11,8 @@ export interface AudioTrack {
   authorName?: string;
   kind: "voice" | "reel";
   durationSec?: number;
+  /** Optional tags from post (e.g. mehfil-replay) for lightweight analytics */
+  tags?: string[];
 }
 
 interface AudioCtxValue {
@@ -39,22 +42,42 @@ export function useAudioPlayer() {
 
 export function AudioProvider({ children }: { children: React.ReactNode }) {
   const elRef = useRef<HTMLAudioElement | null>(null);
+  const fadeRafRef = useRef<number | null>(null);
   const [track, setTrack] = useState<AudioTrack | null>(null);
+  const trackRef = useRef<AudioTrack | null>(null);
   const [playing, setPlaying] = useState(false);
   const [currentTime, setCT] = useState(0);
   const [duration, setDur] = useState(0);
+
+  useEffect(() => {
+    trackRef.current = track;
+  }, [track]);
+
+  const cancelFade = () => {
+    if (fadeRafRef.current != null) {
+      cancelAnimationFrame(fadeRafRef.current);
+      fadeRafRef.current = null;
+    }
+  };
 
   // Create a single audio element for the app lifetime
   useEffect(() => {
     const el = new Audio();
     elRef.current = el;
-    const onEnded = () => setPlaying(false);
+    const onEnded = () => {
+      cancelFade();
+      const t = trackRef.current;
+      if (el) el.volume = 1;
+      setPlaying(false);
+      if (t?.kind === "reel") trackEvent("reel_complete", { post_id: t.postId });
+    };
     const onTU = () => setCT(el.currentTime);
     const onMeta = () => setDur(isFinite(el.duration) ? el.duration : 0);
     el.addEventListener("ended", onEnded);
     el.addEventListener("timeupdate", onTU);
     el.addEventListener("loadedmetadata", onMeta);
     return () => {
+      cancelFade();
       el.pause();
       el.removeEventListener("ended", onEnded);
       el.removeEventListener("timeupdate", onTU);
@@ -65,22 +88,61 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
   const play = useCallback((t: AudioTrack) => {
     const el = elRef.current;
     if (!el || !t.audioUrl) return;
+    cancelFade();
     if (el.src !== t.audioUrl) { el.src = t.audioUrl; el.load(); }
-    el.play().catch(() => {});
+    el.volume = 0;
+    void el.play().catch(() => {});
     setTrack(t);
     setPlaying(true);
     if (t.durationSec) setDur(t.durationSec);
+    const start = performance.now();
+    const fadeIn = (now: number) => {
+      const p = Math.min(1, (now - start) / 320);
+      el.volume = p;
+      if (p < 1) fadeRafRef.current = requestAnimationFrame(fadeIn);
+      else fadeRafRef.current = null;
+    };
+    fadeRafRef.current = requestAnimationFrame(fadeIn);
   }, []);
 
   const pause = useCallback(() => {
-    elRef.current?.pause();
-    setPlaying(false);
+    const el = elRef.current;
+    if (!el) return;
+    cancelFade();
+    const start = performance.now();
+    const fadeOut = (now: number) => {
+      const p = Math.max(0, 1 - (now - start) / 240);
+      el.volume = p;
+      if (p > 0.04) fadeRafRef.current = requestAnimationFrame(fadeOut);
+      else {
+        el.pause();
+        fadeRafRef.current = null;
+        el.volume = 1;
+        setPlaying(false);
+      }
+    };
+    fadeRafRef.current = requestAnimationFrame(fadeOut);
   }, []);
 
   const toggle = useCallback(() => {
-    if (playing) { elRef.current?.pause(); setPlaying(false); }
-    else { elRef.current?.play().catch(() => {}); setPlaying(true); }
-  }, [playing]);
+    const el = elRef.current;
+    if (!el || !track) return;
+    if (playing) pause();
+    else {
+      cancelFade();
+      el.volume = 0;
+      void el.play().catch(() => {});
+      setPlaying(true);
+      const start = performance.now();
+      const fadeIn = (now: number) => {
+        const p = Math.min(1, (now - start) / 300);
+        el.volume = p;
+        if (p < 1) fadeRafRef.current = requestAnimationFrame(fadeIn);
+        else fadeRafRef.current = null;
+      };
+      fadeRafRef.current = requestAnimationFrame(fadeIn);
+    }
+  }, [playing, pause, track]);
 
   const seek = useCallback((pct: number) => {
     const el = elRef.current;
@@ -88,8 +150,13 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
   }, [duration]);
 
   const dismiss = useCallback(() => {
+    cancelFade();
     const el = elRef.current;
-    if (el) { el.pause(); el.src = ""; }
+    if (el) {
+      el.pause();
+      el.src = "";
+      el.volume = 1;
+    }
     setTrack(null); setPlaying(false); setCT(0); setDur(0);
   }, []);
 

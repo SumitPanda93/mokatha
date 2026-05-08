@@ -5,7 +5,7 @@
  * Audio: LiveKit WebRTC (VITE_LIVEKIT_URL required; gracefully degraded if absent).
  */
 import { useEffect, useState, useRef } from "react";
-import { useParams, useLocation } from "wouter";
+import { useParams, useLocation, Link } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
 import { useTitle } from "@/hooks/useTitle";
 import {
@@ -14,7 +14,10 @@ import {
   useRaiseHand, useLowerHand, useApproveQueueEntry, useRejectQueueEntry,
   useEndSpeakerTurn, useEndMehfil, useStartMehfil,
   sendSupportAction, earnInkPoints, supabase,
+  usePublishedMehfilReplay,
 } from "@/lib/store";
+import { trackEvent } from "@/lib/analytics";
+import MehfilReplaySheet from "@/components/MehfilReplaySheet";
 import { toast } from "sonner";
 import {
   Send, Mic, MicOff, Users, Hand, Settings, X,
@@ -167,9 +170,12 @@ export default function MehfilRoom() {
   useMehfilQueueRealtime(id);
 
   const { data: queue = [] } = useMehfilQueue(id);
+  const { data: publishedReplay } = usePublishedMehfilReplay(id);
 
   // ── State ──
   const [joined, setJoined] = useState(false);
+  const [roomEnded, setRoomEnded] = useState(false);
+  const [replaySheetOpen, setReplaySheetOpen] = useState(false);
   const [presence, setPresence] = useState<PresencePayload[]>([]);
   const [tab, setTab] = useState<"chat" | "people" | "queue">("chat");
   const [chat, setChat] = useState<ChatMsg[]>([]);
@@ -183,8 +189,20 @@ export default function MehfilRoom() {
   const channelRef  = useRef<ReturnType<typeof supabase.channel> | null>(null);
   const chatRef     = useRef<HTMLDivElement>(null);
   const livekitRef  = useRef<LKRoom | null>(null);
+  const lkPublishModeRef = useRef<boolean | null>(null);
+  const endedRef = useRef(false);
+  const mutedRef = useRef(false);
+  const prevQueueStatusRef = useRef<string | undefined>(undefined);
+
   const [lkConnState, setLkConnState] = useState<ConnectionState | null>(null);
   const [audioBlocked, setAudioBlocked] = useState(false);
+
+  const lkCbRef = useRef<{
+    setLkConnState: (s: ConnectionState) => void;
+    setAudioBlocked: (v: boolean) => void;
+  }>({ setLkConnState: () => {}, setAudioBlocked: () => {} });
+  lkCbRef.current.setLkConnState = setLkConnState;
+  lkCbRef.current.setAudioBlocked = setAudioBlocked;
 
   const isHost        = !!me && !!mehfil && me === mehfil.hostId;
   const activeSpeaker = queue.find((q) => q.status === "speaking");
@@ -202,18 +220,68 @@ export default function MehfilRoom() {
   const lkConnected = lkConnState === ConnectionState.Connected;
   const lkReconnecting = lkConnState === ConnectionState.Reconnecting;
 
-  // ── Auto-enable mic when approved as speaker ──────────────────────────────
   useEffect(() => {
-    if (!livekitRef.current) return;
-    if (myEntry?.status === "speaking") {
-      livekitRef.current.setMicEnabled(true);
-      setMuted(false);   // mic is ON → muted = false ✓
-      toast.success("🎙️ You're now speaking!", { duration: 3000 });
-    } else if (myEntry?.status === "done" || myEntry?.status === "rejected") {
-      livekitRef.current.setMicEnabled(false);
-      setMuted(true);    // mic is OFF → muted = true ✓ (was false — bug fixed)
+    mutedRef.current = muted;
+  }, [muted]);
+
+  useEffect(() => {
+    const st = myEntry?.status;
+    if (st === "speaking" && prevQueueStatusRef.current !== "speaking") {
+      toast.success("You're live — the room can hear you.", { duration: 2800 });
     }
+    prevQueueStatusRef.current = st;
   }, [myEntry?.status]);
+
+  // ── LiveKit: reconnect when publish permission must change (listener ↔ speaker) ──
+  useEffect(() => {
+    if (!joined || !me || !id || !isLiveKitConfigured()) return;
+    const wantPublish = isHost || myEntry?.status === "speaking";
+    if (lkPublishModeRef.current === null) return;
+    if (lkPublishModeRef.current === wantPublish) return;
+
+    let cancelled = false;
+    void (async () => {
+      livekitRef.current?.disconnect();
+      livekitRef.current = null;
+      const cbs = lkCbRef.current;
+      const ctrl = await connectToMehfil(id, me, wantPublish, {
+        onConnectionStateChange: (state) => cbs.setLkConnState(state),
+        onParticipantCountChange: () => {},
+        onError: (err) => console.error("[LiveKit] reconnect error", err),
+        onAudioBlocked: () => cbs.setAudioBlocked(true),
+        onReconnecting: () => toast("Reconnecting audio…", { duration: 1800 }),
+        onReconnected: () => toast.success("Audio back online", { duration: 1600 }),
+      });
+      if (cancelled || !ctrl) return;
+      livekitRef.current = ctrl;
+      lkPublishModeRef.current = wantPublish;
+      if (wantPublish && myEntry?.status === "speaking") {
+        await ctrl.setMicEnabled(true);
+        setMuted(false);
+      } else if (wantPublish && isHost) {
+        await ctrl.setMicEnabled(!mutedRef.current);
+      } else {
+        await ctrl.setMicEnabled(false);
+        setMuted(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [joined, isHost, myEntry?.status, id, me]);
+
+  // ── Listener: host ended Mehfil remotely ──
+  useEffect(() => {
+    if (!joined || !mehfil || mehfil.isLive || endedRef.current) return;
+    endedRef.current = true;
+    channelRef.current?.untrack();
+    if (channelRef.current) supabase.removeChannel(channelRef.current);
+    channelRef.current = null;
+    livekitRef.current?.disconnect();
+    livekitRef.current = null;
+    lkPublishModeRef.current = null;
+    setJoined(false);
+    setRoomEnded(true);
+    toast.message("This Mehfil has ended.", { duration: 3200 });
+  }, [joined, mehfil?.isLive, mehfil]);
 
   // ── Hooks ──
   const raiseHandMut  = useRaiseHand();
@@ -253,7 +321,10 @@ export default function MehfilRoom() {
           toast.success("Audio reconnected ✓", { duration: 1800 });
         },
       }).then((room) => {
-        if (room) livekitRef.current = room;
+        if (room) {
+          livekitRef.current = room;
+          lkPublishModeRef.current = isHost;
+        }
       });
     }
 
@@ -299,6 +370,7 @@ export default function MehfilRoom() {
           avatar_url: myUser.avatarUrl ?? "",
           role,
         });
+        trackEvent("mehfil_join", { mehfil_id: id });
       });
 
     channelRef.current = channel;
@@ -310,7 +382,30 @@ export default function MehfilRoom() {
     channelRef.current = null;
     livekitRef.current?.disconnect();
     livekitRef.current = null;
+    lkPublishModeRef.current = null;
+    endedRef.current = false;
     setLocation("/mehfil");
+  };
+
+  const closeReplayAndExit = () => {
+    setReplaySheetOpen(false);
+    setRoomEnded(false);
+    endedRef.current = false;
+    setLocation("/mehfil");
+  };
+
+  const finalizeHostEndMehfil = () => {
+    channelRef.current?.untrack();
+    if (channelRef.current) supabase.removeChannel(channelRef.current);
+    channelRef.current = null;
+    livekitRef.current?.disconnect();
+    livekitRef.current = null;
+    lkPublishModeRef.current = null;
+    endedRef.current = true;
+    setJoined(false);
+    setRoomEnded(true);
+    setReplaySheetOpen(true);
+    toast.success("Mehfil ended");
   };
 
   useEffect(() => {
@@ -319,6 +414,7 @@ export default function MehfilRoom() {
       if (channelRef.current) supabase.removeChannel(channelRef.current);
       livekitRef.current?.disconnect();
       livekitRef.current = null;
+      lkPublishModeRef.current = null;
     };
   }, []);
 
@@ -354,6 +450,49 @@ export default function MehfilRoom() {
       <div className="min-h-[100dvh] flex items-center justify-center" style={{ background: "#1A0F14" }}>
         <div className="w-8 h-8 rounded-full border-2 border-t-transparent animate-spin"
           style={{ borderColor: "#E8B14A", borderTopColor: "transparent" }} />
+      </div>
+    );
+  }
+
+  // ── Host: save / publish replay ──
+  if (roomEnded && replaySheetOpen && isHost) {
+    return (
+      <AnimatePresence>
+        <MehfilReplaySheet
+          key="replay-sheet"
+          mehfilId={id}
+          defaultTitle={mehfil.title}
+          onClose={closeReplayAndExit}
+        />
+      </AnimatePresence>
+    );
+  }
+
+  // ── Session ended ──
+  if (roomEnded) {
+    const replayPid = publishedReplay?.postId;
+    return (
+      <div className="min-h-[100dvh] flex flex-col items-center justify-center px-8 text-center" style={{ background: "#1A0F14", color: "#F5F3EF" }}>
+        <div className="text-[10px] tracking-[0.35em] uppercase mb-4 font-['Inter']" style={{ color: "rgba(232,177,74,0.65)" }}>Gathering closed</div>
+        <div className="font-['Playfair_Display'] text-[26px] leading-tight mb-3">{mehfil.title}</div>
+        <div className="text-[13px] mb-10 font-['Inter'] max-w-xs leading-relaxed" style={{ color: "rgba(245,243,239,0.45)" }}>
+          The voices soften — what stays is what we choose to keep.
+        </div>
+        {replayPid ? (
+          <Link href={`/post/${replayPid}`}
+            className="px-8 py-3.5 rounded-full text-[14px] font-['Inter'] font-medium mb-4"
+            style={{ background: "linear-gradient(135deg,#E8B14A,#F76A4A)", color: "#1A0F14" }}>
+            Listen to replay
+          </Link>
+        ) : (
+          <div className="text-[12px] italic mb-6 font-['Playfair_Display']" style={{ color: "rgba(245,243,239,0.35)" }}>
+            No replay here yet — perhaps the host will leave one behind.
+          </div>
+        )}
+        <button type="button" onClick={() => setLocation("/mehfil")}
+          className="text-[13px] font-['Inter'] mt-2" style={{ color: "rgba(245,243,239,0.45)" }}>
+          ← Back to Mehfils
+        </button>
       </div>
     );
   }
@@ -556,7 +695,9 @@ export default function MehfilRoom() {
                     </button>
                   )}
                   <div style={{ borderTop: "1px solid rgba(255,255,255,0.08)" }} />
-                  <button onClick={() => { endMehfilMut.mutate(id); leaveRoom(); }}
+                  <button onClick={() => {
+                    endMehfilMut.mutate(id, { onSuccess: () => { setHostMenuOpen(false); finalizeHostEndMehfil(); } });
+                  }}
                     className="w-full flex items-center gap-3 px-4 py-3 text-[13px] font-['Inter']"
                     style={{ color: "#F76A4A" }}>
                     <X size={14} /> End Mehfil
@@ -606,6 +747,14 @@ export default function MehfilRoom() {
           style={{ color: "rgba(245,243,239,0.55)" }}>
           {mehfil.title}
         </div>
+
+        {activeSpeaker && activeSpeaker.userId === mehfil.hostId && mehfil.isLive && (
+          <motion.div initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }}
+            className="mt-2 px-3 py-1 rounded-full text-[10px] font-['Inter'] uppercase tracking-[0.2em]"
+            style={{ background: "rgba(107,232,158,0.14)", border: "1px solid rgba(107,232,158,0.35)", color: "#8FFFCF" }}>
+            Hosting aloud
+          </motion.div>
+        )}
 
         {mehfil.isLive && (
           <div className="flex items-center gap-3 mt-3">

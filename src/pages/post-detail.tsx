@@ -16,6 +16,7 @@ import {
 import { useAudioPlayer } from "@/lib/audioContext";
 import { toast } from "sonner";
 import PaymentModal from "@/components/PaymentModal";
+import { trackEvent } from "@/lib/analytics";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -233,6 +234,12 @@ export default function PostDetail() {
     if (isCurrentTrack) {
       audioPlayer.toggle();
     } else {
+      if (post.tags?.includes("mehfil-replay")) {
+        trackEvent("mehfil_replay_listen", {
+          post_id: post.id,
+          mehfil_id: post.sourceMehfilId ?? "",
+        });
+      }
       audioPlayer.play({
         postId: post.id,
         title: post.title,
@@ -241,6 +248,7 @@ export default function PostDetail() {
         authorName: author?.displayName,
         kind: post.kind as "voice" | "reel",
         durationSec: post.durationSec,
+        tags: post.tags,
       });
     }
   };

@@ -212,12 +212,17 @@ export default function MehfilList() {
       {/* Cards */}
       <div className="flex-1 px-5 pt-4 pb-28 space-y-5">
         {displayed.length === 0 ? (
-          <div className="text-center py-16">
-            <div className="text-[14px] font-['Playfair_Display'] italic text-muted-foreground">No mehfils here yet</div>
-            <Link href="/create/voice">
-              <div className="mt-4 inline-flex items-center gap-2 text-[13px] font-['Inter'] text-terracotta hover:underline">
-                <Mic size={14} /> Start one now
-              </div>
+          <div className="flex flex-col items-center justify-center py-20 px-8 text-center">
+            <div className="w-14 h-14 rounded-2xl bg-muted flex items-center justify-center mb-4">
+              <Radio size={24} className="text-muted-foreground" />
+            </div>
+            <div className="font-['Playfair_Display'] text-[18px] mb-2">No gatherings scheduled</div>
+            <div className="text-[13px] text-muted-foreground leading-relaxed mb-6">
+              When someone opens a Mehfil, a circle forms.<br />Host one — let the room hear you.
+            </div>
+            <Link href="/mehfil/host/new"
+              className="inline-flex items-center gap-2 px-6 py-3 rounded-full text-[13px] font-['Inter'] font-medium bg-foreground text-background">
+              <Mic size={14} /> Host a Mehfil
             </Link>
           </div>
         ) : (
