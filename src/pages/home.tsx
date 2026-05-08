@@ -8,6 +8,8 @@ import {
   getCurrentUserId, Post, useIsPostUnlocked,
   usePostsRealtime, useMehfilRealtime, useUnreadCount, useNotificationsRealtime,
 } from "@/lib/store";
+import { useAuthState } from "@/lib/auth";
+import Landing from "@/pages/landing";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -334,6 +336,8 @@ export default function Home() {
   useTitle("Home");
   const [filter, setFilter] = useState<Filter>("For you");
   const [tipPostId, setTipPostId] = useState<string | null>(null);
+  const [guestBrowse, setGuestBrowse] = useState(false);
+  const { ready, user: authUser } = useAuthState();
   const { data: posts = [] } = useFeed();
   const { data: user } = useCurrentUser();
   const { data: mehfils = [] } = useMehfils();
@@ -342,6 +346,11 @@ export default function Home() {
   useMehfilRealtime();
   useNotificationsRealtime();
   const { data: unreadCount = 0 } = useUnreadCount();
+
+  // Auth gate: show premium landing for unauthenticated users
+  if (ready && !authUser && !guestBrowse) {
+    return <Landing onBrowse={() => setGuestBrowse(true)} />;
+  }
 
   const filtered = posts.filter((p) => {
     if (filter === "For you") return true;
@@ -407,13 +416,13 @@ export default function Home() {
       </div>
 
       {/* ── Mehfil story row ── */}
-      <div className="px-5 pt-3 pb-2 flex gap-3 overflow-x-auto no-scrollbar">
-        <Link href="/create/story" className="flex flex-col items-center gap-1.5 shrink-0 w-[58px]">
-          <div className="w-[52px] h-[52px] rounded-full border-2 border-dashed border-border flex items-center justify-center text-[22px] text-muted-foreground hover:border-terracotta hover:text-terracotta transition-colors">+</div>
-          <div className="text-[10px] font-['Inter'] text-muted-foreground">You</div>
+      <div className="px-5 pt-2 pb-1 flex gap-2.5 overflow-x-auto no-scrollbar">
+        <Link href="/create/story" className="flex flex-col items-center gap-1 shrink-0 w-[52px]">
+          <div className="w-[46px] h-[46px] rounded-full border-2 border-dashed border-border flex items-center justify-center text-[20px] text-muted-foreground hover:border-terracotta hover:text-terracotta transition-colors">+</div>
+          <div className="text-[9px] font-['Inter'] text-muted-foreground">You</div>
         </Link>
         {mehfils.slice(0, 6).map((m) => (
-          <Link key={m.id} href={`/mehfil/${m.id}`} className="flex flex-col items-center gap-1.5 shrink-0 w-[58px]">
+          <Link key={m.id} href={`/mehfil/${m.id}`} className="flex flex-col items-center gap-1 shrink-0 w-[52px]">
             <div className="relative">
               {m.isLive && (
                 <div className="absolute inset-0 rounded-full p-[2px]" style={{ background: "conic-gradient(from 0deg, hsl(var(--terracotta)), hsl(var(--ochre)), hsl(var(--plum)), hsl(var(--terracotta)))", animation: "feed-spin 4s linear infinite" }}>
@@ -421,18 +430,18 @@ export default function Home() {
                 </div>
               )}
               {!m.isLive && <div className="absolute inset-0 rounded-full border-2 border-border/50" />}
-              <img src={m.coverUrl} alt="" className="relative w-[52px] h-[52px] rounded-full object-cover border-2 border-background" />
+              <img src={m.coverUrl} alt="" className="relative w-[46px] h-[46px] rounded-full object-cover border-2 border-background" />
               {m.isLive && (
                 <div className="absolute -bottom-0.5 left-1/2 -translate-x-1/2 text-[7px] font-['Inter'] tracking-[0.08em] uppercase text-white bg-destructive rounded-sm px-1.5 py-0.5 font-bold whitespace-nowrap leading-tight">LIVE</div>
               )}
             </div>
-            <div className="text-[10px] font-['Inter'] text-foreground/80 text-center line-clamp-1 w-full">{m.title.split(" ")[0]}</div>
+            <div className="text-[9px] font-['Inter'] text-foreground/75 text-center line-clamp-1 w-full">{m.title.split(" ")[0]}</div>
           </Link>
         ))}
       </div>
 
       {/* ── Feed category tabs — editorial underline style ── */}
-      <div className="relative border-b border-border/40 mt-1">
+      <div className="relative border-b border-border/40 mt-0.5">
         <div className="flex overflow-x-auto no-scrollbar px-4">
           {FILTERS.map((f) => (
             <button
@@ -457,7 +466,7 @@ export default function Home() {
 
       {/* ── Live banner ── */}
       {liveMehfil && (
-        <Link href={`/mehfil/${liveMehfil.id}`} className="mx-5 mt-4">
+        <Link href={`/mehfil/${liveMehfil.id}`} className="mx-4 mt-2">
           <motion.div
             whileTap={{ scale: 0.985 }}
             className="rounded-2xl overflow-hidden relative shadow-lg cursor-pointer"
@@ -492,7 +501,7 @@ export default function Home() {
       )}
 
       {/* ── Section heading ── */}
-      <div className="px-5 pt-5 pb-3 flex items-center gap-2">
+      <div className="px-5 pt-3 pb-2 flex items-center gap-2">
         <div className="w-1 h-1 rounded-full bg-terracotta" />
         <div className="text-[10px] font-['Inter'] tracking-[0.28em] uppercase font-semibold text-muted-foreground">
           {filter === "For you" ? "Today's voices" : filter}
@@ -500,7 +509,7 @@ export default function Home() {
       </div>
 
       {/* ── Posts ── */}
-      <div className="flex-1 pb-8 space-y-5 px-4">
+      <div className="flex-1 pb-8 space-y-4 px-4">
         {filtered.map((post) => (
           <PostCard key={post.id} post={post} onTip={() => setTipPostId(post.id)} />
         ))}
