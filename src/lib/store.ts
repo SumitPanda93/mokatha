@@ -69,6 +69,9 @@ export type Mehfil = {
   language: "or" | "hi";
   tags: string[];
   archived?: boolean;
+  isTicketed?: boolean;
+  ticketPrice?: number;
+  maxSpeakers?: number;
 };
 
 export type Tip = {
@@ -96,7 +99,8 @@ export type Transaction = {
 
 export type NotificationKind =
   | "reaction" | "follow" | "tip" | "mention" | "mehfil-start"
-  | "comment" | "like" | "message" | "withdrawal-approved";
+  | "comment" | "like" | "message" | "withdrawal-approved"
+  | "support" | "audio-letter";
 
 export type Notification = {
   id: string;
@@ -256,6 +260,9 @@ function mapMehfil(m: any): Mehfil {
     language: m.language ?? "or",
     tags: m.tags ?? [],
     archived: m.archived ?? false,
+    isTicketed: m.is_ticketed ?? false,
+    ticketPrice: m.ticket_price ?? 0,
+    maxSpeakers: m.max_speakers ?? 3,
   };
 }
 
@@ -1890,6 +1897,347 @@ export const useIsSubscribedTo = (userId: string, authorId: string) =>
 
 export const useIsPostUnlocked = (userId: string, postId: string) =>
   useQ(["isPostUnlocked", userId, postId] as const, () => isPostUnlocked(userId, postId));
+
+// ─── Phase 1 Creator Economy ─────────────────────────────────────────────────
+
+export type SupportActionKind = "chai" | "rose" | "applaud" | "support" | "ticket";
+
+export type SupportAction = {
+  id: string;
+  fromUserId: string;
+  toUserId: string;
+  postId?: string;
+  mehfilId?: string;
+  actionType: SupportActionKind;
+  amount: number;
+  createdAt: string;
+};
+
+export type QueueEntry = {
+  id: string;
+  mehfilId: string;
+  userId: string;
+  status: "pending" | "speaking" | "done" | "rejected";
+  requestedAt: string;
+};
+
+export type AudioLetter = {
+  id: string;
+  fromUserId: string;
+  toUserId: string;
+  audioUrl: string;
+  durationSec: number;
+  body?: string;
+  read: boolean;
+  createdAt: string;
+};
+
+export type AdminConfig = {
+  max_support_amount: number;
+  daily_support_limit: number;
+  max_withdrawal_limit: number;
+  reader_rewards_enabled: boolean;
+  mehfil_ticket_cap: number;
+};
+
+const ADMIN_CONFIG_DEFAULTS: AdminConfig = {
+  max_support_amount: 5,
+  daily_support_limit: 25,
+  max_withdrawal_limit: 500,
+  reader_rewards_enabled: true,
+  mehfil_ticket_cap: 5,
+};
+
+function mapQueueEntry(r: any): QueueEntry {
+  return {
+    id: r.id,
+    mehfilId: r.mehfil_id,
+    userId: r.user_id,
+    status: r.status,
+    requestedAt: r.requested_at,
+  };
+}
+
+function mapAudioLetter(r: any): AudioLetter {
+  return {
+    id: r.id,
+    fromUserId: r.from_user_id,
+    toUserId: r.to_user_id,
+    audioUrl: r.audio_url,
+    durationSec: r.duration_sec ?? 0,
+    body: r.body ?? undefined,
+    read: r.read ?? false,
+    createdAt: r.created_at,
+  };
+}
+
+// ── Support Actions ───────────────────────────────────────────────────────────
+
+export async function sendSupportAction(
+  toUserId: string,
+  actionType: SupportActionKind,
+  amount: number,
+  postId?: string,
+  mehfilId?: string,
+): Promise<void> {
+  const me = getCurrentUserId();
+  if (!me) throw new Error("not_authenticated");
+  if (me === toUserId) throw new Error("cannot_support_yourself");
+  const { data: myWallet } = await supabase
+    .from("wallet_balances").select("balance").eq("user_id", me).maybeSingle();
+  if ((myWallet?.balance ?? 0) < amount) throw new Error("insufficient_balance");
+  const { data: toWallet } = await supabase
+    .from("wallet_balances").select("balance").eq("user_id", toUserId).maybeSingle();
+  const now = new Date().toISOString();
+  await Promise.all([
+    supabase.from("wallet_balances")
+      .update({ balance: (myWallet?.balance ?? 0) - amount }).eq("user_id", me),
+    supabase.from("wallet_balances")
+      .upsert({ user_id: toUserId, balance: (toWallet?.balance ?? 0) + amount }),
+    supabase.from("support_actions").insert({
+      id: `sa${uid()}`, from_user_id: me, to_user_id: toUserId,
+      post_id: postId ?? null, mehfil_id: mehfilId ?? null,
+      action_type: actionType, amount, created_at: now,
+    }),
+    supabase.from("transactions").insert([
+      { id: `tx${uid()}`, user_id: me, kind: "tip-sent", amount, status: "completed", created_at: now, counterparty_id: toUserId, note: `${actionType} appreciation` },
+      { id: `txr${uid()}`, user_id: toUserId, kind: "tip-received", amount, status: "completed", created_at: now, counterparty_id: me, note: `${actionType} received` },
+    ]),
+  ]);
+  const label =
+    actionType === "chai"    ? "☕ a chai"  :
+    actionType === "rose"    ? "🌹 a rose"  :
+    actionType === "applaud" ? "👏 applause" : "📖 support";
+  insertNotif("support", me, postId ?? toUserId, toUserId, `sent you ${label} (₹${amount})`);
+}
+
+export async function getAdminConfig(): Promise<AdminConfig> {
+  const { data } = await supabase.from("admin_config").select("key, value");
+  if (!data?.length) return ADMIN_CONFIG_DEFAULTS;
+  const m: Record<string, string> = {};
+  data.forEach((r: any) => { m[r.key] = r.value; });
+  return {
+    max_support_amount:    Number(m.max_support_amount    ?? 5),
+    daily_support_limit:   Number(m.daily_support_limit   ?? 25),
+    max_withdrawal_limit:  Number(m.max_withdrawal_limit  ?? 500),
+    reader_rewards_enabled: m.reader_rewards_enabled !== "false",
+    mehfil_ticket_cap:     Number(m.mehfil_ticket_cap    ?? 5),
+  };
+}
+
+export async function setAdminConfig(key: string, value: string): Promise<void> {
+  const { error } = await supabase.from("admin_config")
+    .upsert({ key, value, updated_at: new Date().toISOString() });
+  if (error) throw new Error(error.message);
+}
+
+// ── Mehfil queue ──────────────────────────────────────────────────────────────
+
+export async function getMehfilQueue(mehfilId: string): Promise<QueueEntry[]> {
+  const { data } = await supabase.from("mehfil_queue").select("*")
+    .eq("mehfil_id", mehfilId)
+    .in("status", ["pending", "speaking"])
+    .order("requested_at", { ascending: true });
+  return (data ?? []).map(mapQueueEntry);
+}
+
+export async function raiseHand(mehfilId: string): Promise<void> {
+  const me = getCurrentUserId();
+  if (!me) throw new Error("not_authenticated");
+  await supabase.from("mehfil_queue")
+    .delete().eq("mehfil_id", mehfilId).eq("user_id", me).eq("status", "pending");
+  const { error } = await supabase.from("mehfil_queue").insert({
+    id: `q${uid()}`, mehfil_id: mehfilId, user_id: me,
+    status: "pending", requested_at: new Date().toISOString(),
+  });
+  if (error) throw new Error(error.message);
+}
+
+export async function lowerHand(mehfilId: string): Promise<void> {
+  const me = getCurrentUserId();
+  if (!me) throw new Error("not_authenticated");
+  await supabase.from("mehfil_queue")
+    .delete().eq("mehfil_id", mehfilId).eq("user_id", me).eq("status", "pending");
+}
+
+export async function approveQueueEntry(entryId: string): Promise<void> {
+  const { data: entry } = await supabase.from("mehfil_queue")
+    .select("mehfil_id").eq("id", entryId).maybeSingle();
+  if (entry?.mehfil_id) {
+    await supabase.from("mehfil_queue")
+      .update({ status: "done" }).eq("mehfil_id", entry.mehfil_id).eq("status", "speaking");
+  }
+  const { error } = await supabase.from("mehfil_queue")
+    .update({ status: "speaking" }).eq("id", entryId);
+  if (error) throw new Error(error.message);
+}
+
+export async function rejectQueueEntry(entryId: string): Promise<void> {
+  const { error } = await supabase.from("mehfil_queue")
+    .update({ status: "rejected" }).eq("id", entryId);
+  if (error) throw new Error(error.message);
+}
+
+export async function endSpeakerTurn(mehfilId: string): Promise<void> {
+  await supabase.from("mehfil_queue")
+    .update({ status: "done" }).eq("mehfil_id", mehfilId).eq("status", "speaking");
+}
+
+// ── Audio letters ─────────────────────────────────────────────────────────────
+
+export async function getAudioLetters(): Promise<AudioLetter[]> {
+  const me = getCurrentUserId();
+  if (!me) return [];
+  const { data } = await supabase.from("audio_letters").select("*")
+    .eq("to_user_id", me).order("created_at", { ascending: false });
+  return (data ?? []).map(mapAudioLetter);
+}
+
+export async function sendAudioLetter(
+  toUserId: string, audioUrl: string, durationSec: number, body?: string,
+): Promise<void> {
+  const me = getCurrentUserId();
+  if (!me) throw new Error("not_authenticated");
+  const now = new Date().toISOString();
+  const { error } = await supabase.from("audio_letters").insert({
+    id: `al${uid()}`, from_user_id: me, to_user_id: toUserId,
+    audio_url: audioUrl, duration_sec: durationSec, body: body ?? null,
+    read: false, created_at: now,
+  });
+  if (error) throw new Error(error.message);
+  insertNotif("audio-letter", me, toUserId, toUserId,
+    body ? `sent you a voice letter: "${body.slice(0, 50)}"` : "sent you a voice letter");
+}
+
+export async function uploadAudioLetter(userId: string, blob: Blob): Promise<string> {
+  const filename = `${Date.now()}_${Math.random().toString(36).slice(2, 7)}.webm`;
+  const path = `letters/${userId}/${filename}`;
+  const { error } = await supabase.storage.from("audio")
+    .upload(path, blob, { upsert: false, contentType: blob.type || "audio/webm" });
+  if (error) throw new Error(error.message);
+  const { data } = supabase.storage.from("audio").getPublicUrl(path);
+  return data.publicUrl;
+}
+
+// ── New Query hooks ───────────────────────────────────────────────────────────
+
+export const useAdminConfig = () =>
+  useQuery({ queryKey: ["adminConfig"] as const, queryFn: getAdminConfig, staleTime: 60_000 });
+
+export const useMehfilQueue = (mehfilId: string) =>
+  useQuery({
+    queryKey: ["mehfilQueue", mehfilId] as const,
+    queryFn: () => getMehfilQueue(mehfilId),
+    enabled: !!mehfilId,
+    staleTime: 5_000,
+  });
+
+export const useAudioLetters = () =>
+  useQuery({ queryKey: ["audioLetters"] as const, queryFn: getAudioLetters, staleTime: 30_000 });
+
+// ── New Mutation hooks ────────────────────────────────────────────────────────
+
+export function useSendSupport() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (vars: {
+      toUserId: string; actionType: SupportActionKind; amount: number;
+      postId?: string; mehfilId?: string;
+    }) => sendSupportAction(vars.toUserId, vars.actionType, vars.amount, vars.postId, vars.mehfilId),
+    onSuccess: (_d, vars) => {
+      qc.invalidateQueries();
+      // Earn ink for appreciating a creator
+      const me = getCurrentUserId();
+      if (me) earnInkPoints(me, 5).catch(console.warn);
+      const label =
+        vars.actionType === "chai"    ? "☕ Chai sent"     :
+        vars.actionType === "rose"    ? "🌹 Rose delivered" :
+        vars.actionType === "applaud" ? "👏 Applause sent"  : "📖 Support delivered";
+      toast.success(`${label} · +5 ✦ Ink`, { duration: 3000 });
+    },
+    onError: (e: Error) => toast.error(
+      e.message === "insufficient_balance" ? "Not enough balance" : (e.message ?? "Could not send")),
+  });
+}
+
+export function useSetAdminConfig() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (vars: { key: string; value: string }) => setAdminConfig(vars.key, vars.value),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["adminConfig"] }); toast.success("Saved"); },
+    onError: (e: Error) => toast.error(e.message),
+  });
+}
+
+export function useRaiseHand() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (mehfilId: string) => raiseHand(mehfilId),
+    onSuccess: (_d, mehfilId) => {
+      qc.invalidateQueries({ queryKey: ["mehfilQueue", mehfilId] });
+      toast.success("🙋 Hand raised — the host will invite you");
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+}
+
+export function useLowerHand() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (mehfilId: string) => lowerHand(mehfilId),
+    onSuccess: (_d, mehfilId) => { qc.invalidateQueries({ queryKey: ["mehfilQueue", mehfilId] }); },
+  });
+}
+
+export function useApproveQueueEntry() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (entryId: string) => approveQueueEntry(entryId),
+    onSuccess: () => { qc.invalidateQueries(); toast.success("Speaker invited"); },
+    onError: (e: Error) => toast.error(e.message),
+  });
+}
+
+export function useRejectQueueEntry() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (entryId: string) => rejectQueueEntry(entryId),
+    onSuccess: () => { qc.invalidateQueries(); },
+  });
+}
+
+export function useEndSpeakerTurn() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (mehfilId: string) => endSpeakerTurn(mehfilId),
+    onSuccess: () => { qc.invalidateQueries(); toast.success("Speaker turn ended"); },
+  });
+}
+
+export function useSendAudioLetter() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (vars: { toUserId: string; audioUrl: string; durationSec: number; body?: string }) =>
+      sendAudioLetter(vars.toUserId, vars.audioUrl, vars.durationSec, vars.body),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["audioLetters"] }); toast.success("Voice letter sent"); },
+    onError: (e: Error) => toast.error(e.message),
+  });
+}
+
+export function useMehfilQueueRealtime(mehfilId: string) {
+  const qc = useQueryClient();
+  useEffect(() => {
+    if (!mehfilId) return;
+    const channel = supabase
+      .channel(`queue:${mehfilId}`)
+      .on("postgres_changes", {
+        event: "*", schema: "public", table: "mehfil_queue",
+        filter: `mehfil_id=eq.${mehfilId}`,
+      }, () => { qc.invalidateQueries({ queryKey: ["mehfilQueue", mehfilId] }); })
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [qc, mehfilId]);
+}
 
 // ─── Legacy stubs ─────────────────────────────────────────────────────────────
 

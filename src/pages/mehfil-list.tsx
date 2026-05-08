@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link } from "wouter";
-import { Radio, Mic, Plus, Users, Clock, MoreVertical, Trash2, Archive, ArchiveRestore } from "lucide-react";
+import { Radio, Mic, Plus, Users, Clock, MoreVertical, Trash2, Archive, ArchiveRestore, Ticket } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useTitle } from "@/hooks/useTitle";
 import { useMehfils, useUser, useDeleteMehfil, useArchiveMehfil, getCurrentUserId } from "@/lib/store";
@@ -80,6 +80,15 @@ function MehfilCard({ m, index }: { m: any; index: number }) {
           <div className="absolute top-3 left-3 flex items-center gap-1.5 bg-ochre/90 backdrop-blur-sm text-white text-[10px] font-['Inter'] font-bold tracking-[0.1em] rounded-full px-2.5 py-1 pointer-events-none">
             <Clock size={10} />
             {dateStr} · {timeStr}
+          </div>
+        )}
+
+        {/* Ticketed badge */}
+        {m.isTicketed && (m.ticketPrice ?? 0) > 0 && (
+          <div className="absolute top-3 left-3 mt-7 flex items-center gap-1 bg-black/55 backdrop-blur-sm text-white/80 text-[9px] font-['Inter'] tracking-[0.12em] rounded-full px-2 py-1 pointer-events-none"
+            style={{ top: m.isLive || (!m.isLive && new Date(m.startsAt) > new Date()) ? 36 : 12 }}>
+            <Ticket size={9} />
+            ₹{m.ticketPrice}
           </div>
         )}
 

@@ -1,203 +1,821 @@
+/**
+ * MehfilRoom — immersive live audio room.
+ * Features: Supabase Presence for participants, DB-backed speaker queue,
+ * broadcast chat, ticketed paywall, host controls, support (chai) integration.
+ * Audio is aspirational UI in Phase 1 — WebRTC integration is Phase 2.
+ */
 import { useEffect, useState, useRef } from "react";
-import { Link, useParams, useLocation } from "wouter";
+import { useParams, useLocation } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
 import { useTitle } from "@/hooks/useTitle";
-import { useMehfil, useUser, useTip, joinMehfil, leaveMehfil, getCurrentUserId, useMehfils, useEarnInkPoints } from "@/lib/store";
-import { Send } from "lucide-react";
-import PaymentModal from "@/components/PaymentModal";
+import {
+  useMehfil, useUser, getCurrentUserId, useEarnInkPoints,
+  useMehfilRealtime, useMehfilQueue, useMehfilQueueRealtime,
+  useRaiseHand, useLowerHand, useApproveQueueEntry, useRejectQueueEntry,
+  useEndSpeakerTurn, useEndMehfil, useStartMehfil,
+  sendSupportAction, earnInkPoints, supabase,
+} from "@/lib/store";
+import { toast } from "sonner";
+import {
+  Send, Mic, MicOff, Users, Hand, Settings, X,
+  ChevronRight, CheckCircle, XCircle, Crown, Radio,
+} from "lucide-react";
+import SupportSheet from "@/components/SupportSheet";
 
-const FMT_SEC = (s = 0) => {
-  const m = Math.floor(s / 60);
-  const sec = s % 60;
-  return `${m}:${String(sec).padStart(2, "0")}`;
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+type PresencePayload = {
+  user_id: string;
+  display_name: string;
+  avatar_url: string;
+  role: "host" | "speaker" | "listener";
 };
 
 type ChatMsg = { id: string; userId: string; name: string; text: string };
 
-const SEED_CHAT: ChatMsg[] = [
-  { id: "sc1", userId: "u4", name: "Sanjukta Rout", text: "ଏ ଗଜଲ ବହୁତ ଭଲ ।" },
-  { id: "sc2", userId: "u6", name: "Rachita Tripathy", text: "सुबह सुबह ऐसी आवाज़ — बहुत खूब!" },
-  { id: "sc3", userId: "u3", name: "Ashutosh Pradhan", text: "ଶୁଣୁ ଅଛୁ, ଆଖୁ ଭର‍ି ଯାଉଛି।" },
-];
+// ─── Helper components ────────────────────────────────────────────────────────
+
+const AvatarStack = ({ users, max = 8 }: { users: PresencePayload[]; max?: number }) => {
+  const visible = users.slice(0, max);
+  const extra = users.length - max;
+  return (
+    <div className="flex items-center">
+      {visible.map((u, i) => (
+        <div key={u.user_id}
+          className="w-8 h-8 rounded-full border-2 overflow-hidden shrink-0"
+          style={{ borderColor: "#1A0F14", marginLeft: i > 0 ? -10 : 0, zIndex: max - i }}>
+          {u.avatar_url
+            ? <img src={u.avatar_url} alt={u.display_name} className="w-full h-full object-cover" />
+            : <div className="w-full h-full flex items-center justify-center text-[11px] font-bold"
+                style={{ background: "rgba(201,168,76,0.3)", color: "#C9A84C" }}>
+                {u.display_name.charAt(0).toUpperCase()}
+              </div>}
+        </div>
+      ))}
+      {extra > 0 && (
+        <div className="w-8 h-8 rounded-full border-2 flex items-center justify-center text-[10px]"
+          style={{ borderColor: "#1A0F14", marginLeft: -10, background: "rgba(255,255,255,0.12)", color: "rgba(245,243,239,0.7)" }}>
+          +{extra}
+        </div>
+      )}
+    </div>
+  );
+};
+
+const AudioBars = ({ active }: { active: boolean }) => (
+  <div className="flex items-end gap-[3px] h-5">
+    {Array.from({ length: 10 }).map((_, i) => (
+      <motion.div key={i} className="w-[3px] rounded-full"
+        style={{ background: active ? "#E8B14A" : "rgba(232,177,74,0.3)" }}
+        animate={active
+          ? { height: ["20%", "100%", "30%", "70%", "15%"][i % 5] }
+          : { height: "20%" }
+        }
+        transition={{ duration: 0.5 + (i % 3) * 0.2, repeat: Infinity, repeatType: "mirror", delay: i * 0.08 }}
+      />
+    ))}
+  </div>
+);
+
+// ─── Sub-screens ──────────────────────────────────────────────────────────────
+
+function TicketPaywall({
+  mehfil, host, onPay, onLeave, paying,
+}: {
+  mehfil: any; host: any; onPay: () => void; onLeave: () => void; paying: boolean;
+}) {
+  return (
+    <div className="min-h-[100dvh] flex flex-col items-center justify-center px-7 text-center"
+      style={{ background: "#1A0F14", color: "#F5F3EF" }}>
+      <div className="absolute top-0 left-0 right-0 h-[300px] pointer-events-none"
+        style={{ background: "radial-gradient(ellipse at top, rgba(247,106,74,0.12) 0%, transparent 70%)" }} />
+
+      {host?.avatarUrl && (
+        <div className="w-20 h-20 rounded-full overflow-hidden mb-5 border-2"
+          style={{ borderColor: "rgba(232,177,74,0.5)" }}>
+          <img src={host.avatarUrl} alt="" className="w-full h-full object-cover" />
+        </div>
+      )}
+
+      <div className="text-[10px] tracking-[0.3em] uppercase mb-2" style={{ color: "rgba(232,177,74,0.7)" }}>
+        Support this gathering
+      </div>
+      <div className="font-['Playfair_Display'] text-[26px] leading-tight mb-2">{mehfil.title}</div>
+      <div className="text-[13px] mb-1" style={{ color: "rgba(245,243,239,0.55)" }}>
+        hosted by {host?.displayName ?? "Host"}
+      </div>
+      <div className="text-[12px] mb-8" style={{ color: "rgba(245,243,239,0.35)" }}>
+        This gathering asks for a small contribution to enter.
+      </div>
+
+      <motion.button whileTap={{ scale: 0.97 }} onClick={onPay} disabled={paying}
+        className="w-full max-w-xs py-4 rounded-2xl text-[15px] font-['Inter'] font-medium mb-3"
+        style={{
+          background: "linear-gradient(135deg,#C9A84C 0%,#E09060 55%,#F76A4A 100%)",
+          color: "#1A0F14",
+          boxShadow: "0 8px 28px rgba(201,168,76,0.25)",
+        }}>
+        {paying ? "Processing…" : `Contribute ₹${mehfil.ticketPrice} · Enter`}
+      </motion.button>
+
+      <button onClick={onLeave}
+        className="text-[12px]" style={{ color: "rgba(245,243,239,0.35)" }}>
+        Leave quietly
+      </button>
+    </div>
+  );
+}
+
+// ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function MehfilRoom() {
   const params = useParams<{ id: string }>();
-  const id = params.id ?? "m1";
+  const id = params.id ?? "";
   const [, setLocation] = useLocation();
-  const { data: mehfil } = useMehfil(id);
+  const { data: mehfil, isLoading } = useMehfil(id);
   const { data: host } = useUser(mehfil?.hostId ?? "");
-  const tip = useTip("mehfil");
-  const earnPts = useEarnInkPoints();
-  const [joined, setJoined] = useState(false);
-  const [chat, setChat] = useState<ChatMsg[]>(SEED_CHAT);
-  const [draft, setDraft] = useState("");
-  const [tipAmt, setTipAmt] = useState<number | null>(null);
-  const [stripePayOpen, setStripePayOpen] = useState(false);
-  const chatRef = useRef<HTMLDivElement>(null);
   const me = getCurrentUserId();
   const { data: myUser } = useUser(me ?? "");
+
   useTitle(mehfil?.title ?? "Mehfil");
+  useMehfilRealtime(id);
+  useMehfilQueueRealtime(id);
+
+  const { data: queue = [] } = useMehfilQueue(id);
+
+  // ── State ──
+  const [joined, setJoined] = useState(false);
+  const [presence, setPresence] = useState<PresencePayload[]>([]);
+  const [tab, setTab] = useState<"chat" | "people" | "queue">("chat");
+  const [chat, setChat] = useState<ChatMsg[]>([]);
+  const [draft, setDraft] = useState("");
+  const [supportOpen, setSupportOpen] = useState(false);
+  const [hostMenuOpen, setHostMenuOpen] = useState(false);
+  const [payingTicket, setPayingTicket] = useState(false);
+  const [hasTicket, setHasTicket] = useState(false);
+  const [muted, setMuted] = useState(false);
+
+  const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
+  const chatRef    = useRef<HTMLDivElement>(null);
+
+  const isHost        = !!me && !!mehfil && me === mehfil.hostId;
+  const activeSpeaker = queue.find((q) => q.status === "speaking");
+  const pendingQueue  = queue.filter((q) => q.status === "pending");
+  const myEntry       = queue.find((q) => q.userId === me);
+  const listenerCount = presence.length;
+  const activeSpeakerPresence = activeSpeaker
+    ? presence.find((p) => p.user_id === activeSpeaker.userId)
+    : null;
+
+  // ── Hooks ──
+  const raiseHandMut  = useRaiseHand();
+  const lowerHandMut  = useLowerHand();
+  const approveEntry  = useApproveQueueEntry();
+  const rejectEntry   = useRejectQueueEntry();
+  const endTurnMut    = useEndSpeakerTurn();
+  const endMehfilMut  = useEndMehfil();
+  const startMehfilMut = useStartMehfil();
+
+  // ── Join room ──
+  const joinRoom = async () => {
+    if (!me || !myUser || !mehfil) return;
+    setJoined(true);
+    if (me) earnInkPoints(me, 15).catch(console.warn);
+
+    const role: PresencePayload["role"] = isHost ? "host" : "listener";
+    const channel = supabase.channel(`mehfil:${id}`, {
+      config: { presence: { key: me } },
+    });
+
+    channel
+      .on("presence", { event: "sync" }, () => {
+        const state = channel.presenceState<PresencePayload>();
+        setPresence(Object.values(state).flat());
+      })
+      .on("presence", { event: "join" }, ({ newPresences }) => {
+        const p = newPresences[0] as PresencePayload | undefined;
+        if (p && p.user_id !== me) {
+          setChat((c) => [...c.slice(-60), {
+            id: `sys${Date.now()}`,
+            userId: "sys",
+            name: "Room",
+            text: `${p.display_name} joined`,
+          }]);
+        }
+      })
+      .on("broadcast", { event: "chat" }, ({ payload }: { payload: ChatMsg }) => {
+        setChat((c) => [...c.slice(-60), payload]);
+        setTimeout(() => chatRef.current?.scrollTo({ top: 9999, behavior: "smooth" }), 50);
+      })
+      .subscribe(async (status) => {
+        if (status !== "SUBSCRIBED") return;
+        await channel.track({
+          user_id: me,
+          display_name: myUser.displayName,
+          avatar_url: myUser.avatarUrl ?? "",
+          role,
+        });
+      });
+
+    channelRef.current = channel;
+  };
+
+  const leaveRoom = () => {
+    channelRef.current?.untrack();
+    if (channelRef.current) supabase.removeChannel(channelRef.current);
+    channelRef.current = null;
+    setLocation("/mehfil");
+  };
 
   useEffect(() => {
-    if (!joined || !mehfil?.isLive) return;
-    joinMehfil(id);
-    if (me) earnPts.mutate({ userId: me, points: 15 });
-    return () => { leaveMehfil(id); };
-  }, [joined, id, mehfil?.isLive]);
-
-  useEffect(() => {
-    if (!joined) return;
-    const msgs = [
-      "ଆଜି ର ଗଜଲ ଅନ‍ୁପ‍ଅ...",
-      "Wah wah wah!",
-      "ବହୁତ ସୁନ‍୍ଦର ।",
-      "क्या बात है!",
-      "ପୁଣ‍ି ଥ‍ରେ ।",
-    ];
-    const users = [
-      { userId: "u3", name: "Ashutosh" },
-      { userId: "u4", name: "Sanjukta" },
-      { userId: "u5", name: "Debashis" },
-      { userId: "u6", name: "Rachita" },
-    ];
-    const t = setInterval(() => {
-      const u = users[Math.floor(Math.random() * users.length)];
-      const txt = msgs[Math.floor(Math.random() * msgs.length)];
-      setChat((c) => [...c.slice(-30), { id: `auto${Date.now()}`, ...u, text: txt }]);
-      setTimeout(() => chatRef.current?.scrollTo({ top: 9999, behavior: "smooth" }), 50);
-    }, 4000 + Math.random() * 3000);
-    return () => clearInterval(t);
-  }, [joined]);
+    return () => {
+      channelRef.current?.untrack();
+      if (channelRef.current) supabase.removeChannel(channelRef.current);
+    };
+  }, []);
 
   const sendChat = () => {
-    if (!draft.trim()) return;
-    setChat((c) => [...c, { id: `msg${Date.now()}`, userId: me ?? "u1", name: myUser?.displayName ?? "You", text: draft.trim() }]);
+    if (!draft.trim() || !channelRef.current || !me || !myUser) return;
+    const msg: ChatMsg = {
+      id: `m${Date.now()}`, userId: me,
+      name: myUser.displayName, text: draft.trim(),
+    };
+    channelRef.current.send({ type: "broadcast", event: "chat", payload: msg });
+    setChat((c) => [...c.slice(-60), msg]);
     setDraft("");
     setTimeout(() => chatRef.current?.scrollTo({ top: 9999, behavior: "smooth" }), 50);
   };
 
-  const sendTip = (amt: number) => {
-    tip.mutate({ id, amount: amt });
-    setTipAmt(null);
+  const buyTicket = async () => {
+    if (!mehfil?.hostId || !mehfil.ticketPrice) return;
+    setPayingTicket(true);
+    try {
+      await sendSupportAction(mehfil.hostId, "ticket", mehfil.ticketPrice, undefined, id);
+      setHasTicket(true);
+      joinRoom();
+    } catch (e: any) {
+      toast.error(e.message === "insufficient_balance" ? "Not enough balance" : "Could not join");
+    } finally {
+      setPayingTicket(false);
+    }
   };
 
-  if (!mehfil) {
+  // ── Loading ──
+  if (isLoading || !mehfil) {
     return (
-      <div className="min-h-screen bg-[#1A0F14] flex items-center justify-center">
-        <div className="text-white/60 text-[14px] font-['Inter']">Mehfil not found.</div>
+      <div className="min-h-[100dvh] flex items-center justify-center" style={{ background: "#1A0F14" }}>
+        <div className="w-8 h-8 rounded-full border-2 border-t-transparent animate-spin"
+          style={{ borderColor: "#E8B14A", borderTopColor: "transparent" }} />
       </div>
     );
   }
 
+  // ── Ticketed paywall ──
+  const needsTicket = !isHost && (mehfil.isTicketed ?? false) && (mehfil.ticketPrice ?? 0) > 0 && !hasTicket;
+  if (needsTicket && !joined) {
+    return (
+      <TicketPaywall mehfil={mehfil} host={host}
+        onPay={buyTicket} onLeave={() => setLocation("/mehfil")} paying={payingTicket} />
+    );
+  }
+
+  // ── Pre-join screen ──
+  if (!joined) {
+    return (
+      <div className="min-h-[100dvh] flex flex-col" style={{ background: "#1A0F14", color: "#F5F3EF" }}>
+        <style>{`
+          @keyframes mh-pulse { 0%,100%{transform:scale(0.95);opacity:.7} 70%{transform:scale(1.5);opacity:0} }
+          @keyframes mh-spin  { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
+          @keyframes mh-float { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-6px)} }
+          @keyframes mh-glow  { 0%,100%{opacity:.4} 50%{opacity:.9} }
+        `}</style>
+        <div className="absolute inset-0 pointer-events-none">
+          <div className="absolute top-16 left-1/2 -translate-x-1/2 w-[380px] h-[380px] rounded-full opacity-25"
+            style={{ background: "radial-gradient(circle,#F76A4A,transparent 70%)", filter: "blur(40px)", animation: "mh-glow 4s ease-in-out infinite" }} />
+        </div>
+
+        <div className="px-6 py-5 flex items-center">
+          <button onClick={() => setLocation("/mehfil")} className="text-[13px]"
+            style={{ color: "rgba(245,243,239,0.60)" }}>← Back</button>
+        </div>
+
+        <div className="flex-1 flex flex-col items-center justify-center px-7 text-center gap-5">
+          {/* Host avatar */}
+          <div className="relative w-[160px] h-[160px] flex items-center justify-center">
+            {mehfil.isLive && (
+              <div className="absolute w-[140px] h-[140px] rounded-full border-2 border-[#F76A4A]"
+                style={{ animation: "mh-pulse 2.5s ease-out infinite" }} />
+            )}
+            <div className="absolute w-[120px] h-[120px] rounded-full p-[2px]"
+              style={{ background: "conic-gradient(from 0deg,#F76A4A,#E8B14A,#B14A8B,#6A5AE0,#F76A4A)", animation: "mh-spin 7s linear infinite" }}>
+              <div className="w-full h-full rounded-full" style={{ background: "#1A0F14" }} />
+            </div>
+            <div className="relative w-[80px] h-[80px] rounded-full z-10 overflow-hidden border-2"
+              style={{ borderColor: "rgba(245,243,239,0.2)", animation: "mh-float 4s ease-in-out infinite" }}>
+              <img src={host?.avatarUrl || mehfil.coverUrl} alt="" className="w-full h-full object-cover" />
+            </div>
+          </div>
+
+          <div>
+            <div className="text-[10px] tracking-[0.3em] uppercase mb-2" style={{ color: "rgba(232,177,74,0.65)" }}>
+              {mehfil.isLive ? "Live Now" : "Upcoming"}
+            </div>
+            <div className="font-['Playfair_Display'] text-[24px] leading-tight mb-1">{mehfil.title}</div>
+            <div className="text-[13px]" style={{ color: "rgba(245,243,239,0.55)" }}>
+              by {host?.displayName ?? "Host"}
+            </div>
+            {mehfil.description && (
+              <div className="text-[12px] mt-3 leading-[1.6]"
+                style={{ color: "rgba(245,243,239,0.38)" }}>
+                {mehfil.description}
+              </div>
+            )}
+          </div>
+
+          <motion.button whileTap={{ scale: 0.97 }} onClick={joinRoom}
+            className="px-10 py-3.5 rounded-full text-[15px] font-['Inter'] font-medium"
+            style={{
+              background: mehfil.isLive
+                ? "linear-gradient(135deg,#E8B14A,#F76A4A)"
+                : "rgba(255,255,255,0.10)",
+              color: mehfil.isLive ? "#1A0F14" : "#F5F3EF",
+              boxShadow: mehfil.isLive ? "0 8px 28px rgba(232,177,74,0.30)" : "none",
+            }}>
+            {mehfil.isLive ? "Enter Mehfil" : "Set Reminder"}
+          </motion.button>
+
+          {listenerCount > 0 && (
+            <div className="flex items-center gap-2 text-[11px]" style={{ color: "rgba(245,243,239,0.40)" }}>
+              <Users size={12} />
+              {listenerCount} {listenerCount === 1 ? "listener" : "listeners"}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // ── Main room ──────────────────────────────────────────────────────────────
+
   return (
-    <div className="min-h-[100dvh] w-full flex flex-col bg-[#1A0F14] relative overflow-hidden text-[#F5F3EF]">
+    <div className="min-h-[100dvh] w-full flex flex-col overflow-hidden"
+      style={{ background: "#1A0F14", color: "#F5F3EF" }}>
       <style>{`
-        @keyframes mh-pulse { 0% { transform: scale(0.95); opacity: 0.7; } 70% { transform: scale(1.45); opacity: 0; } 100% { transform: scale(1.45); opacity: 0; } }
-        @keyframes mh-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-        @keyframes mh-float { 0%, 100% { transform: translateY(0px); } 50% { transform: translateY(-6px); } }
-        @keyframes mh-bar { 0%, 100% { height: 18%; } 50% { height: 100%; } }
-        @keyframes mh-glow { 0%, 100% { opacity: 0.45; } 50% { opacity: 0.85; } }
+        @keyframes mh-pulse { 0%,100%{transform:scale(0.95);opacity:.7} 70%{transform:scale(1.5);opacity:0} }
+        @keyframes mh-spin  { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
+        @keyframes mh-float { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-5px)} }
+        @keyframes mh-glow  { 0%,100%{opacity:.35} 50%{opacity:.75} }
+        @keyframes speak-ring { 0%,100%{transform:scale(1);opacity:.5} 50%{transform:scale(1.2);opacity:0} }
       `}</style>
 
-      {/* Ambient bg */}
-      <div className="absolute inset-0 pointer-events-none">
-        <div className="absolute top-20 left-1/2 -translate-x-1/2 w-[400px] h-[400px] rounded-full opacity-30" style={{ background: "radial-gradient(circle,#F76A4A,transparent 70%)", filter: "blur(40px)", animation: "mh-glow 4s ease-in-out infinite" }} />
-        <div className="absolute bottom-20 -left-10 w-[240px] h-[240px] rounded-full opacity-25" style={{ background: "radial-gradient(circle,#E8B14A,transparent 70%)", filter: "blur(50px)" }} />
+      {/* Ambient glow */}
+      <div className="fixed inset-0 pointer-events-none">
+        <div className="absolute top-[-40px] left-1/2 -translate-x-1/2 w-[350px] h-[350px] rounded-full opacity-20"
+          style={{ background: "radial-gradient(circle,#F76A4A,transparent 70%)", filter: "blur(50px)", animation: "mh-glow 5s ease-in-out infinite" }} />
+        <div className="absolute bottom-0 -left-20 w-[220px] h-[220px] rounded-full opacity-15"
+          style={{ background: "radial-gradient(circle,#E8B14A,transparent 70%)", filter: "blur(50px)" }} />
       </div>
 
       {/* Top bar */}
-      <div className="px-6 py-4 flex justify-between items-center relative z-10 pt-10">
-        <button onClick={() => { leaveMehfil(id); setLocation("/"); }} className="text-[13px] font-['Inter'] text-[#F5F3EF]/70 hover:text-white transition-colors">Leave</button>
-        <div className="flex items-center gap-2 text-[10px] font-['Inter'] tracking-[0.2em] uppercase text-white rounded-full px-3 py-1.5 font-semibold shadow-lg" style={{ background: mehfil.isLive ? "linear-gradient(135deg,#F76A4A,#C04A3F)" : "rgba(255,255,255,0.1)" }}>
-          {mehfil.isLive ? (
-            <>
-              <div className="relative w-2 h-2"><div className="absolute inset-0 rounded-full bg-white" /><div className="absolute inset-0 rounded-full bg-white" style={{ animation: "mh-pulse 1.5s ease-out infinite" }} /></div>
-              LIVE
-            </>
-          ) : "UPCOMING"}
+      <div className="relative z-10 px-5 pt-10 pb-3 flex items-center justify-between">
+        <button onClick={leaveRoom}
+          className="text-[13px] font-['Inter'] px-3 py-1.5 rounded-full"
+          style={{ color: "rgba(245,243,239,0.65)", background: "rgba(255,255,255,0.08)" }}>
+          Leave
+        </button>
+
+        <div className="flex items-center gap-1.5 text-[10px] font-['Inter'] tracking-[0.18em] uppercase
+          rounded-full px-3 py-1.5 font-semibold"
+          style={{ background: mehfil.isLive ? "linear-gradient(135deg,#F76A4A,#C04A3F)" : "rgba(255,255,255,0.10)" }}>
+          {mehfil.isLive && (
+            <div className="relative w-2 h-2">
+              <div className="absolute inset-0 rounded-full bg-white" />
+              <div className="absolute inset-0 rounded-full bg-white"
+                style={{ animation: "mh-pulse 1.5s ease-out infinite" }} />
+            </div>
+          )}
+          {mehfil.isLive ? "LIVE" : "UPCOMING"}
         </div>
+
+        {isHost ? (
+          <div className="relative">
+            <button onClick={() => setHostMenuOpen((v) => !v)}
+              className="w-8 h-8 rounded-full flex items-center justify-center"
+              style={{ background: "rgba(255,255,255,0.10)" }}>
+              <Settings size={14} style={{ color: "rgba(245,243,239,0.65)" }} />
+            </button>
+            <AnimatePresence>
+              {hostMenuOpen && (
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.92, y: -4 }}
+                  animate={{ opacity: 1, scale: 1, y: 0 }}
+                  exit={{ opacity: 0, scale: 0.92, y: -4 }}
+                  className="absolute top-10 right-0 w-48 rounded-2xl overflow-hidden z-20"
+                  style={{ background: "#2A1A20", border: "1px solid rgba(255,255,255,0.10)" }}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  {!mehfil.isLive && (
+                    <button onClick={() => { startMehfilMut.mutate(id); setHostMenuOpen(false); }}
+                      className="w-full flex items-center gap-3 px-4 py-3 text-[13px] font-['Inter']"
+                      style={{ color: "#E8B14A" }}>
+                      <Radio size={14} /> Go Live
+                    </button>
+                  )}
+                  {activeSpeaker && (
+                    <button onClick={() => { endTurnMut.mutate(id); setHostMenuOpen(false); }}
+                      className="w-full flex items-center gap-3 px-4 py-3 text-[13px] font-['Inter']"
+                      style={{ color: "rgba(245,243,239,0.75)" }}>
+                      <MicOff size={14} /> End speaker turn
+                    </button>
+                  )}
+                  <div style={{ borderTop: "1px solid rgba(255,255,255,0.08)" }} />
+                  <button onClick={() => { endMehfilMut.mutate(id); leaveRoom(); }}
+                    className="w-full flex items-center gap-3 px-4 py-3 text-[13px] font-['Inter']"
+                    style={{ color: "#F76A4A" }}>
+                    <X size={14} /> End Mehfil
+                  </button>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+        ) : (
+          <div className="w-8" />
+        )}
       </div>
 
-      {/* Stage */}
-      <div className="flex flex-col items-center px-6 pt-4 pb-4 relative z-10">
-        <div className="text-[9px] font-['Inter'] tracking-[0.4em] uppercase text-[#E8B14A] font-medium mb-5 flex items-center gap-3">
-          <span className="w-6 h-[1px] bg-[#E8B14A]" />MEHFIL<span className="w-6 h-[1px] bg-[#E8B14A]" />
+      {/* Stage section */}
+      <div className="relative z-10 flex flex-col items-center px-6 pt-2 pb-4">
+        <div className="text-[9px] font-['Inter'] tracking-[0.4em] uppercase flex items-center gap-3 mb-4"
+          style={{ color: "rgba(232,177,74,0.65)" }}>
+          <span className="w-6 h-px" style={{ background: "rgba(232,177,74,0.40)" }} />
+          MEHFIL
+          <span className="w-6 h-px" style={{ background: "rgba(232,177,74,0.40)" }} />
         </div>
-        <div className="relative w-[200px] h-[200px] flex items-center justify-center mb-4">
-          {mehfil.isLive && <div className="absolute w-[170px] h-[170px] rounded-full border-2 border-[#F76A4A]" style={{ animation: "mh-pulse 2.4s ease-out infinite" }} />}
-          <div className="absolute w-[140px] h-[140px] rounded-full p-[2.5px]" style={{ background: "conic-gradient(from 0deg,#F76A4A,#E8B14A,#B14A8B,#6A5AE0,#F76A4A)", animation: "mh-spin 6s linear infinite" }}>
-            <div className="w-full h-full rounded-full bg-[#1A0F14]" />
+
+        {/* Host avatar */}
+        <div className="relative w-[150px] h-[150px] flex items-center justify-center mb-3">
+          {mehfil.isLive && (
+            <div className="absolute w-[130px] h-[130px] rounded-full border-2 border-[#F76A4A]"
+              style={{ animation: "mh-pulse 2.5s ease-out infinite" }} />
+          )}
+          <div className="absolute w-[112px] h-[112px] rounded-full p-[2px]"
+            style={{ background: "conic-gradient(from 0deg,#F76A4A,#E8B14A,#B14A8B,#6A5AE0,#F76A4A)", animation: "mh-spin 7s linear infinite" }}>
+            <div className="w-full h-full rounded-full" style={{ background: "#1A0F14" }} />
           </div>
-          <div className="relative w-[90px] h-[90px] rounded-full z-10 overflow-hidden border-[2px] border-[#F5F3EF]/25 shadow-2xl" style={{ animation: "mh-float 4s ease-in-out infinite" }}>
+          <div className="relative w-[72px] h-[72px] rounded-full z-10 overflow-hidden border-[2px]"
+            style={{ borderColor: "rgba(245,243,239,0.2)", animation: "mh-float 4s ease-in-out infinite" }}>
             <img src={host?.avatarUrl || mehfil.coverUrl} alt="" className="w-full h-full object-cover" />
           </div>
+          <div className="absolute bottom-2 right-2 w-5 h-5 rounded-full flex items-center justify-center z-20"
+            style={{ background: "#E8B14A" }}>
+            <Crown size={10} color="#1A0F14" />
+          </div>
         </div>
 
-        <div className="text-[26px] font-['Playfair_Display'] font-normal text-[#F5F3EF] text-center leading-tight">{host?.displayName ?? "Host"}</div>
-        <div className="text-[14px] font-['Playfair_Display'] italic text-[#F5F3EF]/60 mt-1 mb-2 text-center">{mehfil.title}</div>
+        <div className="text-[22px] font-['Playfair_Display'] text-center">
+          {host?.displayName ?? "Host"}
+        </div>
+        <div className="text-[13px] italic mt-0.5 text-center"
+          style={{ color: "rgba(245,243,239,0.55)" }}>
+          {mehfil.title}
+        </div>
 
         {mehfil.isLive && (
-          <>
-            <div className="flex items-end gap-[3px] h-5 mb-2">
-              {Array.from({ length: 10 }).map((_, i) => (
-                <div key={i} className="w-[3px] rounded-full bg-[#E8B14A]" style={{ animation: `mh-bar ${0.6 + (i % 4) * 0.2}s ease-in-out infinite ${i * 0.08}s` }} />
-              ))}
+          <div className="flex items-center gap-3 mt-3">
+            <AudioBars active={!muted} />
+            <div className="text-[11px] font-['Inter'] flex items-center gap-1.5"
+              style={{ color: "rgba(245,243,239,0.60)" }}>
+              <span className="w-1.5 h-1.5 rounded-full" style={{ background: "#6BE89E" }} />
+              <span style={{ color: "#6BE89E", fontWeight: 600 }}>{listenerCount}</span> listening
             </div>
-            <div className="text-[11px] font-['Inter'] text-[#F5F3EF]/70 flex items-center gap-2 mb-4">
-              <span className="w-1.5 h-1.5 rounded-full bg-[#6BE89E] shrink-0" />
-              <span className="text-[#6BE89E] font-semibold">{mehfil.listeners}</span> listening
-            </div>
-          </>
+          </div>
         )}
 
-        {/* Join / tip buttons */}
-        {!joined ? (
-          <motion.button whileTap={{ scale: 0.97 }} onClick={() => setJoined(true)}
-            className="text-[15px] font-['Inter'] font-medium text-[#1A0F14] bg-[#E8B14A] rounded-full px-10 py-3 shadow-lg hover:scale-105 transition-transform">
-            {mehfil.isLive ? "Join Mehfil" : "Set Reminder"}
-          </motion.button>
-        ) : (
-          <div className="flex gap-3">
-            <motion.button whileTap={{ scale: 0.92 }} onClick={() => setStripePayOpen(true)}
-              className="text-[14px] font-['Playfair_Display'] text-[#1A0F14] bg-[#E8B14A] rounded-full px-7 py-2.5 shadow-md hover:scale-105 transition-transform">
-              Send Tip
-            </motion.button>
+        {/* Active speaker (if different from host) */}
+        <AnimatePresence>
+          {activeSpeaker && activeSpeaker.userId !== mehfil.hostId && activeSpeakerPresence && (
+            <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 8 }}
+              className="mt-4 flex items-center gap-3 px-4 py-3 rounded-2xl"
+              style={{ background: "rgba(107,232,158,0.10)", border: "1px solid rgba(107,232,158,0.25)" }}>
+              <div className="relative w-9 h-9 rounded-full overflow-hidden shrink-0">
+                {activeSpeakerPresence.avatar_url
+                  ? <img src={activeSpeakerPresence.avatar_url} alt="" className="w-full h-full object-cover" />
+                  : <div className="w-full h-full flex items-center justify-center text-[13px]"
+                      style={{ background: "rgba(107,232,158,0.2)", color: "#6BE89E" }}>
+                      {activeSpeakerPresence.display_name.charAt(0)}
+                    </div>}
+                <div className="absolute inset-0 rounded-full border-2"
+                  style={{ borderColor: "#6BE89E", animation: "speak-ring 1.8s ease-out infinite" }} />
+              </div>
+              <div>
+                <div className="text-[12px] font-['Inter'] font-medium" style={{ color: "#6BE89E" }}>
+                  Speaking
+                </div>
+                <div className="text-[13px] font-['Playfair_Display']">{activeSpeakerPresence.display_name}</div>
+              </div>
+              <AudioBars active={true} />
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Listener avatars */}
+        {presence.filter((p) => p.role === "listener").length > 0 && (
+          <div className="mt-4 flex items-center gap-3">
+            <AvatarStack users={presence.filter((p) => p.role === "listener")} max={7} />
+            <span className="text-[10px]" style={{ color: "rgba(245,243,239,0.35)" }}>listening</span>
           </div>
         )}
       </div>
 
-      {/* Live chat */}
-      {joined && (
-        <div className="flex-1 flex flex-col mx-4 mt-2 bg-black/30 rounded-2xl overflow-hidden relative z-10 min-h-0">
-          <div className="text-[9px] font-['Inter'] tracking-[0.25em] uppercase text-[#F5F3EF]/50 px-3 py-2">Live chat</div>
-          <div ref={chatRef} className="flex-1 overflow-y-auto px-3 pb-2 space-y-1.5 no-scrollbar" style={{ maxHeight: "180px" }}>
-            {chat.map((m) => (
-              <div key={m.id} className="text-[12px] font-['Inter']">
-                <span className="text-[#E8B14A] font-medium mr-1">{m.name}</span>
-                <span className="text-[#F5F3EF]/80">{m.text}</span>
+      {/* Tab bar */}
+      <div className="relative z-10 flex border-b mx-5"
+        style={{ borderColor: "rgba(255,255,255,0.08)" }}>
+        {(["chat", "people", "queue"] as const).map((t) => {
+          const label = t === "chat" ? "Chat" : t === "people" ? `People · ${listenerCount}` : `Queue · ${pendingQueue.length}`;
+          const active = tab === t;
+          return (
+            <button key={t} onClick={() => setTab(t)}
+              className={`flex-1 py-2.5 text-[11px] font-['Inter'] transition-colors relative ${
+                active ? "font-medium" : ""
+              }`}
+              style={{ color: active ? "#E8B14A" : "rgba(245,243,239,0.40)" }}>
+              {label}
+              {active && (
+                <motion.div layoutId="mehfil-room-tab"
+                  className="absolute bottom-0 left-3 right-3 h-[1.5px] rounded-full"
+                  style={{ background: "#E8B14A" }}
+                  transition={{ type: "spring", stiffness: 400, damping: 30 }} />
+              )}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Tab content */}
+      <div className="relative z-10 flex-1 flex flex-col min-h-0 mx-4 mt-3">
+
+        {/* Chat tab */}
+        {tab === "chat" && (
+          <div className="flex-1 flex flex-col min-h-0 rounded-2xl overflow-hidden"
+            style={{ background: "rgba(0,0,0,0.25)", border: "1px solid rgba(255,255,255,0.07)" }}>
+            <div ref={chatRef}
+              className="flex-1 overflow-y-auto px-3 py-2 space-y-1.5 no-scrollbar"
+              style={{ maxHeight: "calc(100dvh - 430px)" }}>
+              {chat.length === 0 && (
+                <div className="flex items-center justify-center h-16 text-[12px]"
+                  style={{ color: "rgba(245,243,239,0.25)" }}>
+                  Be the first to say something…
+                </div>
+              )}
+              {chat.map((m) => (
+                <div key={m.id} className="text-[12px] font-['Inter']">
+                  {m.userId === "sys" ? (
+                    <span style={{ color: "rgba(245,243,239,0.30)" }} className="italic text-[11px]">
+                      {m.text}
+                    </span>
+                  ) : (
+                    <>
+                      <span className="font-medium mr-1.5" style={{ color: m.userId === me ? "#6BE89E" : "#E8B14A" }}>
+                        {m.name}
+                      </span>
+                      <span style={{ color: "rgba(245,243,239,0.80)" }}>{m.text}</span>
+                    </>
+                  )}
+                </div>
+              ))}
+            </div>
+            <div className="flex items-center gap-2 p-2.5"
+              style={{ borderTop: "1px solid rgba(255,255,255,0.07)" }}>
+              <input value={draft} onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && sendChat()}
+                placeholder="Say something…"
+                className="flex-1 rounded-full px-3 py-1.5 text-[12px] outline-none"
+                style={{ background: "rgba(255,255,255,0.09)", color: "#F5F3EF" }} />
+              <button onClick={sendChat}
+                className="w-8 h-8 rounded-full flex items-center justify-center shrink-0"
+                style={{ background: "#E8B14A" }}>
+                <Send size={12} color="#1A0F14" />
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* People tab */}
+        {tab === "people" && (
+          <div className="flex-1 overflow-y-auto no-scrollbar space-y-2"
+            style={{ maxHeight: "calc(100dvh - 430px)" }}>
+            {presence.length === 0 && (
+              <div className="text-center py-8 text-[12px]"
+                style={{ color: "rgba(245,243,239,0.30)" }}>No listeners yet</div>
+            )}
+            {presence.map((p) => (
+              <div key={p.user_id} className="flex items-center gap-3 px-3 py-2.5 rounded-xl"
+                style={{ background: "rgba(255,255,255,0.04)" }}>
+                <div className="w-9 h-9 rounded-full overflow-hidden shrink-0">
+                  {p.avatar_url
+                    ? <img src={p.avatar_url} alt="" className="w-full h-full object-cover" />
+                    : <div className="w-full h-full flex items-center justify-center text-[13px]"
+                        style={{ background: "rgba(201,168,76,0.2)", color: "#C9A84C" }}>
+                        {p.display_name.charAt(0)}
+                      </div>}
+                </div>
+                <div className="flex-1">
+                  <div className="text-[13px] font-['Inter']">{p.display_name}</div>
+                  <div className="text-[10px] capitalize" style={{ color: "rgba(245,243,239,0.35)" }}>
+                    {p.role}
+                  </div>
+                </div>
+                {p.role === "host" && <Crown size={13} style={{ color: "#E8B14A" }} />}
+                {p.role === "speaker" && (
+                  <div className="w-2 h-2 rounded-full" style={{ background: "#6BE89E" }} />
+                )}
               </div>
             ))}
           </div>
-          <div className="flex items-center gap-2 p-2 border-t border-white/10">
-            <input value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => e.key === "Enter" && sendChat()}
-              placeholder="Say something..." className="flex-1 bg-white/10 rounded-full px-3 py-1.5 text-[12px] text-white placeholder:text-white/40 outline-none" />
-            <button onClick={sendChat} className="w-8 h-8 rounded-full bg-[#E8B14A] flex items-center justify-center">
-              <Send size={12} className="text-[#1A0F14]" />
-            </button>
+        )}
+
+        {/* Queue tab */}
+        {tab === "queue" && (
+          <div className="flex-1 overflow-y-auto no-scrollbar"
+            style={{ maxHeight: "calc(100dvh - 430px)" }}>
+            {/* Host: approve/reject queue */}
+            {isHost && pendingQueue.length > 0 && (
+              <div className="space-y-2">
+                <div className="text-[9px] tracking-[0.22em] uppercase px-1 mb-2"
+                  style={{ color: "rgba(232,177,74,0.55)" }}>
+                  Waiting to speak
+                </div>
+                {pendingQueue.map((entry) => {
+                  const p = presence.find((pr) => pr.user_id === entry.userId);
+                  return (
+                    <div key={entry.id} className="flex items-center gap-3 px-3 py-2.5 rounded-xl"
+                      style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.07)" }}>
+                      <div className="w-8 h-8 rounded-full overflow-hidden shrink-0"
+                        style={{ background: "rgba(201,168,76,0.2)" }}>
+                        {p?.avatar_url && <img src={p.avatar_url} alt="" className="w-full h-full object-cover" />}
+                      </div>
+                      <div className="flex-1 text-[13px] font-['Inter']">
+                        {p?.display_name ?? "Listener"}
+                      </div>
+                      <div className="flex gap-2">
+                        <motion.button whileTap={{ scale: 0.93 }}
+                          onClick={() => approveEntry.mutate(entry.id)}
+                          className="w-8 h-8 rounded-full flex items-center justify-center"
+                          style={{ background: "rgba(107,232,158,0.15)", border: "1px solid rgba(107,232,158,0.35)" }}>
+                          <CheckCircle size={15} style={{ color: "#6BE89E" }} />
+                        </motion.button>
+                        <motion.button whileTap={{ scale: 0.93 }}
+                          onClick={() => rejectEntry.mutate(entry.id)}
+                          className="w-8 h-8 rounded-full flex items-center justify-center"
+                          style={{ background: "rgba(247,106,74,0.12)", border: "1px solid rgba(247,106,74,0.30)" }}>
+                          <XCircle size={15} style={{ color: "#F76A4A" }} />
+                        </motion.button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {isHost && pendingQueue.length === 0 && (
+              <div className="text-center py-8 text-[12px]"
+                style={{ color: "rgba(245,243,239,0.28)" }}>
+                No hands raised yet
+              </div>
+            )}
+
+            {!isHost && (
+              <div className="flex flex-col items-center gap-4 py-6">
+                {myEntry?.status === "pending" ? (
+                  <>
+                    <div className="w-12 h-12 rounded-full flex items-center justify-center"
+                      style={{ background: "rgba(232,177,74,0.15)", border: "1px solid rgba(232,177,74,0.35)" }}>
+                      <Hand size={20} style={{ color: "#E8B14A" }} />
+                    </div>
+                    <div className="text-[13px] font-['Playfair_Display'] italic"
+                      style={{ color: "#E8B14A" }}>
+                      Hand raised — waiting for host
+                    </div>
+                    <motion.button whileTap={{ scale: 0.96 }}
+                      onClick={() => lowerHandMut.mutate(id)}
+                      className="px-5 py-2 rounded-full text-[12px] font-['Inter']"
+                      style={{ background: "rgba(255,255,255,0.07)", color: "rgba(245,243,239,0.60)" }}>
+                      Lower hand
+                    </motion.button>
+                  </>
+                ) : myEntry?.status === "speaking" ? (
+                  <div className="text-center">
+                    <div className="w-12 h-12 rounded-full mx-auto flex items-center justify-center mb-3"
+                      style={{ background: "rgba(107,232,158,0.15)", border: "1.5px solid #6BE89E" }}>
+                      <Mic size={20} style={{ color: "#6BE89E" }} />
+                    </div>
+                    <div className="text-[14px] font-['Playfair_Display'] italic" style={{ color: "#6BE89E" }}>
+                      You're speaking
+                    </div>
+                    <div className="text-[11px] mt-1" style={{ color: "rgba(245,243,239,0.35)" }}>
+                      Host will end your turn when ready
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <div className="text-[12px] text-center" style={{ color: "rgba(245,243,239,0.38)" }}>
+                      Want to speak? Raise your hand and the host will invite you.
+                    </div>
+                    <motion.button whileTap={{ scale: 0.96 }}
+                      onClick={() => raiseHandMut.mutate(id)}
+                      disabled={raiseHandMut.isPending}
+                      className="flex items-center gap-2 px-6 py-3 rounded-full text-[13px] font-['Inter'] font-medium"
+                      style={{
+                        background: "rgba(232,177,74,0.14)",
+                        border: "1px solid rgba(232,177,74,0.40)",
+                        color: "#E8B14A",
+                      }}>
+                      <Hand size={15} />
+                      Raise Hand
+                    </motion.button>
+                  </>
+                )}
+              </div>
+            )}
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
-      <div className="h-8" />
+      {/* Bottom action bar */}
+      <div className="relative z-10 px-5 pt-3 pb-8 flex items-center justify-between gap-3"
+        style={{ borderTop: "1px solid rgba(255,255,255,0.06)" }}>
+        {/* Chai support */}
+        <motion.button whileTap={{ scale: 0.93 }}
+          onClick={() => setSupportOpen(true)}
+          className="flex items-center gap-2 px-4 py-2.5 rounded-full text-[12px] font-['Inter']"
+          style={{
+            background: "rgba(201,168,76,0.12)",
+            border: "1px solid rgba(201,168,76,0.28)",
+            color: "#C9A84C",
+          }}>
+          ☕ <span>Chai</span>
+        </motion.button>
 
-      {stripePayOpen && mehfil && (
-        <PaymentModal
-          mode="tip"
-          recipientId={mehfil.hostId}
-          mehfilId={id}
-          onClose={() => setStripePayOpen(false)}
-        />
-      )}
+        {/* Mute toggle (aspirational UI) */}
+        <motion.button whileTap={{ scale: 0.93 }}
+          onClick={() => setMuted((v) => !v)}
+          className="w-12 h-12 rounded-full flex items-center justify-center"
+          style={{
+            background: muted ? "rgba(247,106,74,0.15)" : "rgba(255,255,255,0.09)",
+            border: muted ? "1px solid rgba(247,106,74,0.35)" : "1px solid rgba(255,255,255,0.12)",
+          }}>
+          {muted
+            ? <MicOff size={18} style={{ color: "#F76A4A" }} />
+            : <Mic size={18} style={{ color: "rgba(245,243,239,0.70)" }} />}
+        </motion.button>
+
+        {/* Queue / raise hand */}
+        {!isHost && (
+          <motion.button whileTap={{ scale: 0.93 }}
+            onClick={() => setTab("queue")}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-full text-[12px] font-['Inter'] relative"
+            style={{
+              background: myEntry?.status === "pending" ? "rgba(232,177,74,0.14)" : "rgba(255,255,255,0.07)",
+              border: myEntry?.status === "pending" ? "1px solid rgba(232,177,74,0.40)" : "1px solid rgba(255,255,255,0.10)",
+              color: myEntry?.status === "pending" ? "#E8B14A" : "rgba(245,243,239,0.60)",
+            }}>
+            <Hand size={14} />
+            <span>{myEntry?.status === "pending" ? "Waiting…" : "Speak"}</span>
+          </motion.button>
+        )}
+
+        {isHost && (
+          <motion.button whileTap={{ scale: 0.93 }}
+            onClick={() => setTab("queue")}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-full text-[12px] font-['Inter'] relative"
+            style={{
+              background: pendingQueue.length > 0 ? "rgba(232,177,74,0.14)" : "rgba(255,255,255,0.07)",
+              border: pendingQueue.length > 0 ? "1px solid rgba(232,177,74,0.40)" : "1px solid rgba(255,255,255,0.10)",
+              color: pendingQueue.length > 0 ? "#E8B14A" : "rgba(245,243,239,0.60)",
+            }}>
+            <Users size={14} />
+            <span>Queue</span>
+            {pendingQueue.length > 0 && (
+              <span className="w-4 h-4 rounded-full text-[9px] flex items-center justify-center font-bold"
+                style={{ background: "#E8B14A", color: "#1A0F14" }}>
+                {pendingQueue.length}
+              </span>
+            )}
+          </motion.button>
+        )}
+      </div>
+
+      {/* Support sheet */}
+      <AnimatePresence>
+        {supportOpen && mehfil.hostId && (
+          <SupportSheet
+            toUserId={mehfil.hostId}
+            toUserName={host?.displayName ?? "Host"}
+            mehfilId={id}
+            onClose={() => setSupportOpen(false)}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }

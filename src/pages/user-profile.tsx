@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link, useParams, useLocation } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowLeft, MoreHorizontal, Heart, MessageCircle, Play, Check, Star, X, Mic, FileText, BookOpen, Clapperboard } from "lucide-react";
+import { ArrowLeft, MoreHorizontal, Heart, MessageCircle, Play, Check, Star, X, Mic, FileText, BookOpen, Clapperboard, Mail } from "lucide-react";
 import { useTitle } from "@/hooks/useTitle";
 import {
   useUserByHandle, useFollow, usePostsByAuthor, useIsFollowing, getCurrentUserId,
@@ -9,6 +9,8 @@ import {
   useUnsubscribeFromAuthor, useWalletBalance, getOrCreateConversationId,
   Post,
 } from "@/lib/store";
+import SupportSheet from "@/components/SupportSheet";
+import AudioLetterRecorder from "@/components/AudioLetterRecorder";
 
 // ─── Kind gradient fallback ───────────────────────────────────────────────────
 
@@ -117,6 +119,8 @@ export default function UserProfile() {
   const [tab, setTab] = useState<"posts" | "tipped" | "saved">("posts");
   const [subSheet, setSubSheet] = useState(false);
   const [msgLoading, setMsgLoading] = useState(false);
+  const [supportOpen, setSupportOpen] = useState(false);
+  const [audioLetterOpen, setAudioLetterOpen] = useState(false);
   const follow = useFollow();
   const subscribe = useSubscribeToAuthor();
   const unsubscribe = useUnsubscribeFromAuthor();
@@ -208,26 +212,44 @@ export default function UserProfile() {
 
         {/* Actions */}
         {!isMe && (
-          <div className="mt-5 flex gap-2">
-            <motion.button whileTap={{ scale: 0.97 }}
-              onClick={() => follow.mutate({ userId: user.id, on: !following })}
-              className={`flex-1 py-3 rounded-xl text-[13px] font-['Inter'] transition-colors ${following ? "bg-card border border-border text-foreground" : "bg-foreground text-background"}`}>
-              {following ? "Following" : "Follow"}
-            </motion.button>
-            <button
-              disabled={msgLoading || !me}
-              onClick={async () => {
-                if (!me) { setLocation("/auth/login"); return; }
-                setMsgLoading(true);
-                try {
-                  const convId = await getOrCreateConversationId(me, user.id);
-                  setLocation(`/messages?open=${convId}`);
-                } finally { setMsgLoading(false); }
-              }}
-              className="flex-1 py-3 rounded-xl border border-border text-[13px] font-['Inter'] hover:bg-card transition-colors disabled:opacity-50">
-              {msgLoading ? "…" : "Message"}
-            </button>
-          </div>
+          <>
+            <div className="mt-5 flex gap-2">
+              <motion.button whileTap={{ scale: 0.97 }}
+                onClick={() => follow.mutate({ userId: user.id, on: !following })}
+                className={`flex-1 py-3 rounded-xl text-[13px] font-['Inter'] transition-colors ${following ? "bg-card border border-border text-foreground" : "bg-foreground text-background"}`}>
+                {following ? "Following" : "Follow"}
+              </motion.button>
+              <button
+                disabled={msgLoading || !me}
+                onClick={async () => {
+                  if (!me) { setLocation("/auth/login"); return; }
+                  setMsgLoading(true);
+                  try {
+                    const convId = await getOrCreateConversationId(me, user.id);
+                    setLocation(`/messages?open=${convId}`);
+                  } finally { setMsgLoading(false); }
+                }}
+                className="flex-1 py-3 rounded-xl border border-border text-[13px] font-['Inter'] hover:bg-card transition-colors disabled:opacity-50">
+                {msgLoading ? "…" : "Message"}
+              </button>
+            </div>
+            {/* Appreciation row */}
+            {me && (
+              <div className="mt-2 flex gap-2">
+                <motion.button whileTap={{ scale: 0.96 }}
+                  onClick={() => setSupportOpen(true)}
+                  className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl border text-[12px] font-['Inter'] transition-colors"
+                  style={{ borderColor: "hsl(var(--ochre)/0.35)", color: "hsl(var(--ochre))", background: "hsl(var(--ochre)/0.06)" }}>
+                  ☕ Appreciate
+                </motion.button>
+                <motion.button whileTap={{ scale: 0.96 }}
+                  onClick={() => setAudioLetterOpen(true)}
+                  className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl border border-border text-[12px] font-['Inter'] hover:bg-card transition-colors text-muted-foreground">
+                  <Mail size={13} /> Voice letter
+                </motion.button>
+              </div>
+            )}
+          </>
         )}
 
         {/* Subscription plan card */}
@@ -363,6 +385,28 @@ export default function UserProfile() {
             className="fixed top-5 right-5 z-[51] w-9 h-9 rounded-full bg-black/50 flex items-center justify-center">
             <X size={16} className="text-white" />
           </motion.button>
+        )}
+      </AnimatePresence>
+
+      {/* Appreciation sheet */}
+      <AnimatePresence>
+        {supportOpen && (
+          <SupportSheet
+            toUserId={user.id}
+            toUserName={user.displayName}
+            onClose={() => setSupportOpen(false)}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Voice letter recorder */}
+      <AnimatePresence>
+        {audioLetterOpen && (
+          <AudioLetterRecorder
+            toUserId={user.id}
+            toUserName={user.displayName}
+            onClose={() => setAudioLetterOpen(false)}
+          />
         )}
       </AnimatePresence>
     </div>
