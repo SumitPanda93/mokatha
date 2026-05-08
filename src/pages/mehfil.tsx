@@ -184,6 +184,8 @@ export default function MehfilRoom() {
   const chatRef     = useRef<HTMLDivElement>(null);
   const livekitRef  = useRef<LKRoom | null>(null);
   const [lkConnState, setLkConnState] = useState<ConnectionState | null>(null);
+  const [audioBlocked, setAudioBlocked] = useState(false);
+  const [reconnecting, setReconnecting] = useState(false);
 
   const isHost        = !!me && !!mehfil && me === mehfil.hostId;
   const activeSpeaker = queue.find((q) => q.status === "speaking");
@@ -224,16 +226,26 @@ export default function MehfilRoom() {
 
     // ── LiveKit audio ─────────────────────────────────────────────────────────
     if (isLiveKitConfigured()) {
-      const canPublish = isHost; // host publishes; listeners subscribe only
+      const canPublish = isHost;
       connectToMehfil(id, me, canPublish, {
         onConnectionStateChange: (state) => setLkConnState(state),
         onParticipantCountChange: (count) => {
-          // Optionally update a listener count display
           console.debug("[LiveKit] participants:", count);
         },
         onError: (err) => {
           console.error("[LiveKit] error", err);
           toast.error("Audio connection issue — retrying…", { duration: 3000 });
+        },
+        onAudioBlocked: () => {
+          setAudioBlocked(true);
+        },
+        onReconnecting: () => {
+          setReconnecting(true);
+          toast("Reconnecting to Mehfil audio…", { duration: 2500 });
+        },
+        onReconnected: () => {
+          setReconnecting(false);
+          toast.success("Audio reconnected", { duration: 2000 });
         },
       }).then((room) => {
         if (room) livekitRef.current = room;
@@ -245,12 +257,17 @@ export default function MehfilRoom() {
       config: { presence: { key: me } },
     });
 
+    const syncPresence = () => {
+      const state = channel.presenceState<PresencePayload>();
+      // Use full sync to prevent ghost participants
+      setPresence(Object.values(state).flat());
+    };
+
     channel
-      .on("presence", { event: "sync" }, () => {
-        const state = channel.presenceState<PresencePayload>();
-        setPresence(Object.values(state).flat());
-      })
+      .on("presence", { event: "sync" }, syncPresence)
       .on("presence", { event: "join" }, ({ newPresences }) => {
+        // Also update full state on every join (eliminates stale/ghost entries)
+        syncPresence();
         const p = newPresences[0] as unknown as PresencePayload | undefined;
         if (p && p.user_id !== me) {
           setChat((c) => [...c.slice(-60), {
@@ -260,6 +277,10 @@ export default function MehfilRoom() {
             text: `${p.display_name} joined`,
           }]);
         }
+      })
+      .on("presence", { event: "leave" }, () => {
+        // Resync on every leave to remove ghost participants
+        syncPresence();
       })
       .on("broadcast", { event: "chat" }, ({ payload }: { payload: ChatMsg }) => {
         setChat((c) => [...c.slice(-60), payload]);
@@ -437,6 +458,41 @@ export default function MehfilRoom() {
         <div className="absolute bottom-0 -left-20 w-[220px] h-[220px] rounded-full opacity-15"
           style={{ background: "radial-gradient(circle,#E8B14A,transparent 70%)", filter: "blur(50px)" }} />
       </div>
+
+      {/* Audio blocked banner — tap anywhere to enable audio on mobile */}
+      <AnimatePresence>
+        {audioBlocked && (
+          <motion.button
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            onClick={() => {
+              livekitRef.current?.enableAudio();
+              setAudioBlocked(false);
+            }}
+            className="relative z-50 mx-5 mt-2 w-auto rounded-full flex items-center justify-center gap-2 py-2 px-4 text-[12px] font-['Inter']"
+            style={{ background: "rgba(232,177,74,0.15)", border: "1px solid rgba(232,177,74,0.35)", color: "#E8B14A" }}
+          >
+            <Mic size={13} /> Tap to enable audio
+          </motion.button>
+        )}
+      </AnimatePresence>
+
+      {/* Reconnecting indicator */}
+      <AnimatePresence>
+        {reconnecting && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="relative z-50 mx-5 mt-1 rounded-full flex items-center justify-center gap-2 py-1.5 px-4 text-[11px] font-['Inter']"
+            style={{ background: "rgba(247,106,74,0.12)", border: "1px solid rgba(247,106,74,0.25)", color: "#F76A4A" }}
+          >
+            <div className="w-1.5 h-1.5 rounded-full bg-current animate-pulse" />
+            Reconnecting…
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Top bar */}
       <div className="relative z-10 px-5 pt-10 pb-3 flex items-center justify-between">

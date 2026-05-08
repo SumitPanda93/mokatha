@@ -169,26 +169,28 @@ export default function Profile() {
           </div>
         </div>
 
-        {/* ── Secondary row: Subscribers + Wallet ── */}
-        <div className="flex gap-2 mb-5 mt-1">
-          <div className="flex-1 flex items-center gap-2.5 px-4 py-2.5 rounded-xl bg-card border border-border/50">
-            <Star size={13} className="text-plum shrink-0" />
-            <div>
-              <div className="text-[15px] font-['Playfair_Display'] leading-none">{subscribers.length}</div>
-              <div className="text-[9px] uppercase tracking-[0.12em] text-muted-foreground mt-0.5">subscribers</div>
-            </div>
-          </div>
-          <Link href="/wallet"
-            className="flex-1 flex items-center gap-2.5 px-4 py-2.5 rounded-xl bg-card border border-border/50 hover:border-sage/40 transition-colors">
-            <span className="text-sage text-[14px] font-['Inter'] shrink-0">₹</span>
-            <div>
-              <div className="text-[15px] font-['Playfair_Display'] leading-none text-sage">
-                {balance >= 1000 ? `${(balance / 1000).toFixed(1)}k` : balance}
+        {/* ── Secondary row: Subscribers + Wallet — hidden for visitor view ── */}
+        {!viewAs && (
+          <div className="flex gap-2 mb-5 mt-1">
+            <div className="flex-1 flex items-center gap-2.5 px-4 py-2.5 rounded-xl bg-card border border-border/50">
+              <Star size={13} className="text-plum shrink-0" />
+              <div>
+                <div className="text-[15px] font-['Playfair_Display'] leading-none">{subscribers.length}</div>
+                <div className="text-[9px] uppercase tracking-[0.12em] text-muted-foreground mt-0.5">subscribers</div>
               </div>
-              <div className="text-[9px] uppercase tracking-[0.12em] text-muted-foreground mt-0.5">wallet</div>
             </div>
-          </Link>
-        </div>
+            <Link href="/wallet"
+              className="flex-1 flex items-center gap-2.5 px-4 py-2.5 rounded-xl bg-card border border-border/50 hover:border-sage/40 transition-colors">
+              <span className="text-sage text-[14px] font-['Inter'] shrink-0">₹</span>
+              <div>
+                <div className="text-[15px] font-['Playfair_Display'] leading-none text-sage">
+                  {balance >= 1000 ? `${(balance / 1000).toFixed(1)}k` : balance}
+                </div>
+                <div className="text-[9px] uppercase tracking-[0.12em] text-muted-foreground mt-0.5">wallet</div>
+              </div>
+            </Link>
+          </div>
+        )}
 
         {/* Quick action cards — hidden in visitor view */}
         {!viewAs && (

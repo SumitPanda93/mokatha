@@ -52,16 +52,20 @@ function TxRow({ tx }: { tx: Transaction }) {
 export default function Wallet() {
   useTitle("Wallet");
   const [, setLocation] = useLocation();
-  const meId = getCurrentUserId() ?? "u1";
+  const meId = getCurrentUserId() ?? "";
   const { data: balance = 0 } = useWalletBalance(meId);
-  const { data: txs = [] } = useTransactions(meId);
+  const { data: txs = [], isLoading: txLoading } = useTransactions(meId);
+
+  // Ensure latest first
+  const sorted = [...txs].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
   const weekStart = Date.now() - 7 * 86_400_000;
-  const weeklyEarnings = txs.filter((t) => t.kind === "tip-received" && +new Date(t.createdAt) >= weekStart).reduce((s, t) => s + t.amount, 0);
+  const weeklyEarnings = sorted.filter((t) => t.kind === "tip-received" && +new Date(t.createdAt) >= weekStart).reduce((s, t) => s + t.amount, 0);
   const [showing, setShowing] = useState(8);
 
-  const tips = txs.filter((t) => t.kind === "tip-received").reduce((s, t) => s + t.amount, 0);
-  const earnings = txs.filter((t) => t.kind === "earning").reduce((s, t) => s + t.amount, 0);
-  const mehfilTips = txs.filter((t) => t.kind === "tip-received" && t.note?.includes("Tip in")).reduce((s, t) => s + t.amount, 0);
+  const tips = sorted.filter((t) => t.kind === "tip-received").reduce((s, t) => s + t.amount, 0);
+  const earnings = sorted.filter((t) => t.kind === "earning").reduce((s, t) => s + t.amount, 0);
+  const mehfilTips = sorted.filter((t) => t.kind === "tip-received" && t.note?.includes("Tip in")).reduce((s, t) => s + t.amount, 0);
 
   return (
     <div className="min-h-screen w-full flex flex-col bg-background text-foreground">
@@ -120,13 +124,29 @@ export default function Wallet() {
       </div>
 
       <div className="px-5 pb-10">
-        {txs.length === 0 && (
-          <div className="py-12 text-center text-muted-foreground text-[13px] font-['Playfair_Display'] italic">No transactions yet.</div>
+        {txLoading && (
+          <div className="space-y-1 animate-pulse">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <div key={i} className="flex items-center gap-3 py-3 border-b border-border">
+                <div className="w-9 h-9 rounded-full bg-muted shrink-0" />
+                <div className="flex-1 space-y-2">
+                  <div className="h-3.5 bg-muted rounded-full w-3/5" />
+                  <div className="h-2.5 bg-muted rounded-full w-2/5" />
+                </div>
+                <div className="h-4 bg-muted rounded-full w-14" />
+              </div>
+            ))}
+          </div>
         )}
-        {txs.slice(0, showing).map((tx) => <TxRow key={tx.id} tx={tx} />)}
-        {txs.length > showing && (
+        {!txLoading && sorted.length === 0 && (
+          <div className="py-12 text-center text-muted-foreground text-[13px] font-['Playfair_Display'] italic">
+            Your first appreciation will appear here.
+          </div>
+        )}
+        {!txLoading && sorted.slice(0, showing).map((tx) => <TxRow key={tx.id} tx={tx} />)}
+        {sorted.length > showing && (
           <button onClick={() => setShowing((s) => s + 8)} className="w-full py-3 mt-2 text-[12px] text-muted-foreground hover:text-foreground transition-colors">
-            Show more
+            View more
           </button>
         )}
       </div>

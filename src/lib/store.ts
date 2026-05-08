@@ -1411,8 +1411,14 @@ export const usePostsByAuthor = (id: string) => useQ(QK.postsByAuthor(id), () =>
 export const useMehfils = () => useQ(QK.mehfils, getMehfils);
 export const useMehfil = (id: string) => useQ(QK.mehfil(id), () => getMehfil(id));
 export const useTransactions = (id?: string) => {
-  const userId = id ?? getCurrentUserId();
-  return useQ(QK.transactions(userId), () => getTransactionsForUser(userId));
+  const userId = id ?? getCurrentUserId() ?? "";
+  // staleTime:0 ensures fresh data on every mount (wallet statements must be current)
+  return useQuery({
+    queryKey: QK.transactions(userId),
+    queryFn: () => getTransactionsForUser(userId),
+    enabled: !!userId,
+    staleTime: 0,
+  });
 };
 export const useNotifications = () => useQ(QK.notifications, getNotifications);
 // Lightweight unread count — key is a child of QK.notifications so it gets

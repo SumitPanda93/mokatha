@@ -21,7 +21,7 @@ const KIND_LABEL: Record<string, string> = {
   voice: "Voice", text: "Text", story: "Story", reel: "Reel",
 };
 
-const FILTERS = ["For you", "Voice", "Text", "Story", "Reel", "Odia", "Hindi"] as const;
+const FILTERS = ["For you", "Voice", "Text", "Story", "Reel"] as const;
 type Filter = typeof FILTERS[number];
 
 function greeting() {
@@ -219,7 +219,7 @@ function TextCard({ post, onTip }: { post: Post; onTip: () => void }) {
   );
 }
 
-// ─── Reel card ────────────────────────────────────────────────────────────────
+// ─── Reel card — cinematic, immersive, Apple TV + Spotify Canvas ──────────────
 
 function ReelCard({ post, onTip }: { post: Post; onTip: () => void }) {
   const { data: author } = useUser(post.authorId);
@@ -230,61 +230,115 @@ function ReelCard({ post, onTip }: { post: Post; onTip: () => void }) {
     ? `${Math.floor(post.durationSec / 60)}:${String(post.durationSec % 60).padStart(2, "0")}`
     : null;
 
-  return (
-    <div className="rounded-2xl overflow-hidden shadow-md">
-      {/* Cinematic cover */}
-      <Link href={`/post/${post.id}`} className="relative block aspect-[4/3] overflow-hidden">
-        {post.coverUrl
-          ? <img src={post.coverUrl} alt="" className="absolute inset-0 w-full h-full object-cover" />
-          : <div className="absolute inset-0" style={{ background: "linear-gradient(135deg, #0E0717 0%, #1A0F2E 50%, #0E1720 100%)" }} />
-        }
-        <div className="absolute inset-0" style={{ background: "linear-gradient(to top, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.1) 55%, transparent 100%)" }} />
+  // Cinematic ambient palette based on cover (warm plum default)
+  const ambientBg = post.coverUrl
+    ? undefined
+    : "linear-gradient(160deg, #0E0717 0%, #1A0F2E 45%, #0A1020 75%, #120A1C 100%)";
 
-        {/* Top badges */}
-        <div className="absolute top-3 left-3 right-3 flex items-center justify-between">
-          <div className="flex gap-1.5">
-            <span className="text-[9px] font-['Inter'] tracking-[0.2em] uppercase px-2.5 py-1 rounded-full font-semibold bg-plum/90 text-white backdrop-blur-sm">Reel</span>
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="rounded-3xl overflow-hidden shadow-xl relative"
+      style={{ boxShadow: "0 12px 48px rgba(0,0,0,0.28)" }}
+    >
+      {/* Full-height cinematic canvas */}
+      <Link href={`/post/${post.id}`} className="relative block overflow-hidden" style={{ aspectRatio: "4/5" }}>
+        {post.coverUrl ? (
+          <img src={post.coverUrl} alt="" className="absolute inset-0 w-full h-full object-cover scale-[1.02] transition-transform duration-700" />
+        ) : (
+          <div className="absolute inset-0" style={{ background: ambientBg }} />
+        )}
+
+        {/* Multi-layer cinematic gradient */}
+        <div className="absolute inset-0" style={{
+          background: "linear-gradient(to bottom, rgba(0,0,0,0.08) 0%, rgba(0,0,0,0.02) 30%, rgba(0,0,0,0.65) 70%, rgba(0,0,0,0.92) 100%)"
+        }} />
+        {/* Subtle side vignette */}
+        <div className="absolute inset-0" style={{
+          background: "linear-gradient(to right, rgba(0,0,0,0.12) 0%, transparent 25%, transparent 75%, rgba(0,0,0,0.12) 100%)"
+        }} />
+
+        {/* Top row — kind badge + duration */}
+        <div className="absolute top-4 left-4 right-4 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="text-[8px] font-['Inter'] tracking-[0.28em] uppercase px-2.5 py-1 rounded-full font-semibold backdrop-blur-md"
+              style={{ background: "rgba(155,89,182,0.75)", color: "#fff" }}>
+              Reel
+            </span>
             <AccessBadge post={post} />
           </div>
-          {dur && <span className="text-[10px] font-['Inter'] font-medium bg-black/55 text-white/90 backdrop-blur-sm px-2 py-0.5 rounded-full">{dur}</span>}
+          {dur && (
+            <span className="text-[10px] font-['Inter'] tabular-nums backdrop-blur-sm px-2 py-0.5 rounded-full"
+              style={{ background: "rgba(0,0,0,0.50)", color: "rgba(255,255,255,0.85)" }}>
+              {dur}
+            </span>
+          )}
         </div>
 
-        {/* Centered play */}
+        {/* Centered play button — premium minimal */}
         <div className="absolute inset-0 flex items-center justify-center">
-          <motion.div whileTap={{ scale: 0.9 }}
-            className="w-[52px] h-[52px] rounded-full border-2 border-white/70 flex items-center justify-center backdrop-blur-sm"
-            style={{ background: "rgba(255,255,255,0.15)" }}>
-            <Play size={18} className="text-white ml-0.5" fill="white" />
+          <motion.div
+            whileTap={{ scale: 0.88 }}
+            className="flex items-center justify-center"
+            style={{
+              width: 56, height: 56,
+              borderRadius: "50%",
+              background: "rgba(255,255,255,0.14)",
+              backdropFilter: "blur(12px)",
+              border: "1.5px solid rgba(255,255,255,0.35)",
+              boxShadow: "0 8px 32px rgba(0,0,0,0.4)",
+            }}
+          >
+            <Play size={20} className="text-white ml-1" fill="white" />
           </motion.div>
         </div>
 
-        {/* Bottom: title + author */}
-        <div className="absolute bottom-0 left-0 right-0 px-4 pb-4">
-          <div className="text-[18px] font-['Playfair_Display'] text-white leading-snug mb-1.5 line-clamp-2">{post.title}</div>
-          <div className="flex items-center gap-2">
-            <img src={author?.avatarUrl} alt="" className="w-5 h-5 rounded-full object-cover border border-white/30" />
-            <span className="text-[11px] font-['Inter'] text-white/75">{author?.displayName}</span>
+        {/* Bottom — creator + title block */}
+        <div className="absolute bottom-0 left-0 right-0 px-5 pb-5">
+          {/* Creator strip */}
+          <div className="flex items-center gap-2 mb-2.5">
+            {author?.avatarUrl && (
+              <img src={author.avatarUrl} alt="" className="w-[26px] h-[26px] rounded-full object-cover"
+                style={{ border: "1.5px solid rgba(255,255,255,0.25)" }} />
+            )}
+            <span className="text-[11px] font-['Inter'] tracking-[0.04em]"
+              style={{ color: "rgba(255,255,255,0.70)" }}>
+              {author?.displayName}
+            </span>
+          </div>
+
+          {/* Title — literary typography */}
+          <div className="font-['Playfair_Display'] text-[22px] text-white leading-[1.25] italic"
+            style={{ textShadow: "0 2px 12px rgba(0,0,0,0.6)" }}>
+            <span className="line-clamp-3">{post.title}</span>
           </div>
         </div>
       </Link>
 
-      {/* Action row */}
-      <div className="px-4 py-3 bg-card flex items-center gap-2">
-        <motion.button whileTap={{ scale: 0.85 }} onClick={() => like.mutate()}
+      {/* Action bar — floats below, part of card */}
+      <div className="px-4 py-3 flex items-center gap-1.5"
+        style={{ background: "hsl(var(--card))", borderTop: "1px solid hsl(var(--border)/0.5)" }}>
+        <motion.button whileTap={{ scale: 0.82 }} onClick={() => like.mutate()}
           className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[12px] font-['Inter'] transition-colors ${post.liked ? "text-terracotta" : "text-muted-foreground hover:text-terracotta"}`}>
-          <Heart size={13} fill={post.liked ? "currentColor" : "none"} />{post.likes}
+          <Heart size={13} fill={post.liked ? "currentColor" : "none"} />
+          <span>{post.likes}</span>
         </motion.button>
-        <Link href={`/post/${post.id}`} className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[12px] font-['Inter'] text-muted-foreground hover:text-foreground transition-colors">
-          <MessageCircle size={13} />{post.comments}
+        <Link href={`/post/${post.id}`}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[12px] font-['Inter'] text-muted-foreground hover:text-foreground transition-colors">
+          <MessageCircle size={13} /><span>{post.comments}</span>
         </Link>
         <div className="flex-1" />
-        <button onClick={onTip} className="text-[11px] font-['Inter'] font-medium px-3 py-1.5 rounded-full border border-ochre/50 text-ochre hover:bg-ochre hover:text-white transition-colors">Tip ₹</button>
-        <button onClick={() => save.mutate({ postId: post.id, on: !saved })}
+        <button onClick={onTip}
+          className="text-[11px] font-['Inter'] font-medium px-3 py-1.5 rounded-full border border-ochre/40 text-ochre hover:bg-ochre hover:text-white transition-all">
+          Appreciate
+        </button>
+        <motion.button whileTap={{ scale: 0.85 }} onClick={() => save.mutate({ postId: post.id, on: !saved })}
           className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors ${saved ? "text-violet" : "text-muted-foreground hover:text-violet"}`}>
           <Bookmark size={14} fill={saved ? "currentColor" : "none"} />
-        </button>
+        </motion.button>
       </div>
-    </div>
+    </motion.div>
   );
 }
 
@@ -334,7 +388,7 @@ export default function Home() {
   useTitle("Home");
   const [filter, setFilter] = useState<Filter>("For you");
   const [tipPostId, setTipPostId] = useState<string | null>(null);
-  const { data: posts = [] } = useFeed();
+  const { data: posts = [], isLoading: feedLoading } = useFeed();
   const { data: user } = useCurrentUser();
   const { data: mehfils = [] } = useMehfils();
   const liveMehfil = mehfils.find((m) => m.isLive);
@@ -349,8 +403,6 @@ export default function Home() {
     if (filter === "Text") return p.kind === "text";
     if (filter === "Story") return p.kind === "story";
     if (filter === "Reel") return p.kind === "reel";
-    if (filter === "Odia") return p.language === "or";
-    if (filter === "Hindi") return p.language === "hi";
     return true;
   });
 
@@ -501,10 +553,23 @@ export default function Home() {
 
       {/* ── Posts ── */}
       <div className="flex-1 pb-8 space-y-4 px-4">
-        {filtered.map((post) => (
+        {feedLoading && (
+          <div className="space-y-4 animate-pulse">
+            {Array.from({ length: 3 }).map((_, i) => (
+              <div key={i} className="rounded-2xl overflow-hidden bg-card border border-border">
+                <div className="aspect-[4/3] bg-muted" />
+                <div className="p-4 space-y-2">
+                  <div className="h-4 bg-muted rounded-full w-3/4" />
+                  <div className="h-3 bg-muted rounded-full w-1/2" />
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+        {!feedLoading && filtered.map((post) => (
           <PostCard key={post.id} post={post} onTip={() => setTipPostId(post.id)} />
         ))}
-        {filtered.length === 0 && (
+        {!feedLoading && filtered.length === 0 && (
           <div className="text-center py-14">
             <div className="text-[15px] font-['Playfair_Display'] italic text-muted-foreground">A quiet moment. Nothing here yet.</div>
           </div>

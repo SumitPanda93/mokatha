@@ -1,27 +1,34 @@
-import { useState } from "react";
-import { Link, useLocation } from "wouter";
-import { ArrowLeft, Plus, Trash2 } from "lucide-react";
+import { useRef, useState } from "react";
+import { useLocation } from "wouter";
+import { motion } from "framer-motion";
+import { ArrowLeft, Plus, Trash2, ImagePlus, X, Loader2 } from "lucide-react";
 import { useTitle } from "@/hooks/useTitle";
 import { useAddPost, getCurrentUserId } from "@/lib/store";
+import { supabase } from "@/lib/supabase";
 import { toast } from "sonner";
 
-const COVERS = [
-  "https://images.unsplash.com/photo-1499951360447-b19be8fe80f5?w=800",
-  "https://images.unsplash.com/photo-1518770660439-4636190af475?w=800",
-  "https://images.unsplash.com/photo-1456513080510-7bf3a84b82f8?w=800",
-  "https://images.unsplash.com/photo-1495446815901-a7297e633e8d?w=800",
-];
-
 type Chapter = { id: string; title: string; body: string };
+
+async function uploadCoverImage(userId: string, file: File): Promise<string> {
+  const ext = file.name.split(".").pop() ?? "jpg";
+  const path = `covers/${userId}/${Date.now()}.${ext}`;
+  const { error } = await supabase.storage.from("audio").upload(path, file, { upsert: true });
+  if (error) throw error;
+  const { data } = supabase.storage.from("audio").getPublicUrl(path);
+  return data.publicUrl;
+}
 
 export default function CreateStory() {
   useTitle("Write story");
   const [, setLocation] = useLocation();
   const [title, setTitle] = useState("");
   const [tags, setTags] = useState("");
-  const [cover, setCover] = useState(COVERS[0]);
+  const [coverUrl, setCoverUrl] = useState<string | null>(null);
+  const [coverPreview, setCoverPreview] = useState<string | null>(null);
+  const [uploadingCover, setUploadingCover] = useState(false);
   const [language, setLanguage] = useState<"or" | "hi">("or");
   const [chapters, setChapters] = useState<Chapter[]>([{ id: "ch1", title: "ପ୍ରଥମ ଅଧ୍ୟାୟ", body: "" }]);
+  const coverInputRef = useRef<HTMLInputElement>(null);
   const add = useAddPost();
 
   const addChapter = () => setChapters((c) => [...c, { id: `ch${Date.now()}`, title: `अध्याय ${c.length + 1}`, body: "" }]);
@@ -35,30 +42,70 @@ export default function CreateStory() {
     const body = chapters.map((c) => `${c.title}\n\n${c.body}`).join("\n\n");
     add.mutate({
       kind: "story", authorId: me, title: title.trim(), body,
-      coverUrl: cover, language,
+      coverUrl: coverUrl ?? "", language,
       tags: tags.split(",").map((s) => s.trim()).filter(Boolean),
     }, { onSuccess: () => { toast.success("Story published!"); setLocation("/"); } });
+  };
+
+  const handleCoverChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const me = getCurrentUserId();
+    if (!me) { toast.error("Sign in first"); return; }
+    const localUrl = URL.createObjectURL(file);
+    setCoverPreview(localUrl);
+    setUploadingCover(true);
+    try {
+      const url = await uploadCoverImage(me, file);
+      setCoverUrl(url);
+    } catch {
+      toast.error("Cover upload failed");
+      setCoverPreview(null);
+    } finally {
+      setUploadingCover(false);
+      URL.revokeObjectURL(localUrl);
+    }
   };
 
   return (
     <div className="min-h-screen w-full bg-background flex flex-col">
       <div className="px-5 py-3 flex items-center justify-between">
-        <Link href="/create" className="w-9 h-9 rounded-full border border-border flex items-center justify-center"><ArrowLeft size={16} /></Link>
+        <button onClick={() => setLocation("/")} className="w-9 h-9 rounded-full border border-border flex items-center justify-center"><ArrowLeft size={16} /></button>
         <div className="text-[11px] uppercase tracking-[0.2em] text-muted-foreground">Story</div>
         <div className="w-9" />
       </div>
 
       <div className="px-5 mt-3">
-        <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Story title" className="w-full bg-transparent outline-none font-['Playfair_Display'] text-[28px] text-foreground placeholder:text-muted-foreground/50 mb-3 border-b border-border pb-2" />
-        <div>
-          <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground mb-2">Cover</div>
-          <div className="grid grid-cols-4 gap-2">
-            {COVERS.map((c) => (
-              <button key={c} onClick={() => setCover(c)} className={`aspect-[4/3] rounded-xl overflow-hidden border-2 ${cover === c ? "border-terracotta" : "border-transparent"}`}>
-                <img src={c} alt="" className="w-full h-full object-cover" />
+        <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Story title"
+          className="w-full bg-transparent outline-none font-['Playfair_Display'] text-[28px] text-foreground placeholder:text-muted-foreground/50 mb-3 border-b border-border pb-2" />
+
+        {/* Cover — custom upload only */}
+        <div className="mb-4">
+          <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground mb-2">Cover (optional)</div>
+          {coverPreview || coverUrl ? (
+            <div className="relative rounded-2xl overflow-hidden aspect-[16/9]">
+              <img src={coverPreview || coverUrl!} alt="" className="w-full h-full object-cover" />
+              {uploadingCover && (
+                <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
+                  <Loader2 size={20} className="text-white animate-spin" />
+                </div>
+              )}
+              <button onClick={() => { setCoverUrl(null); setCoverPreview(null); }}
+                className="absolute top-2 right-2 w-7 h-7 rounded-full bg-black/60 flex items-center justify-center">
+                <X size={14} className="text-white" />
               </button>
-            ))}
-          </div>
+            </div>
+          ) : (
+            <motion.button whileTap={{ scale: 0.97 }}
+              onClick={() => coverInputRef.current?.click()}
+              className="w-full rounded-2xl border border-dashed border-border flex flex-col items-center justify-center gap-2 py-7 hover:border-terracotta hover:bg-terracotta/5 transition-all"
+            >
+              <ImagePlus size={20} className="text-muted-foreground" />
+              <span className="text-[12px] text-muted-foreground font-['Inter']">Add your own cover</span>
+              <span className="text-[10px] text-muted-foreground/60 font-['Inter']">Leave blank for a cinematic gradient</span>
+            </motion.button>
+          )}
+          <input ref={coverInputRef} type="file" accept="image/*" className="hidden" onChange={handleCoverChange} />
         </div>
       </div>
 
@@ -93,9 +140,11 @@ export default function CreateStory() {
       </div>
 
       <div className="px-5 mt-7 mb-10">
-        <button disabled={!title.trim() || add.isPending} onClick={publish} className="w-full py-3.5 rounded-xl bg-foreground text-background text-[14px] disabled:opacity-50">
+        <motion.button whileTap={{ scale: 0.98 }}
+          disabled={!title.trim() || add.isPending || uploadingCover} onClick={publish}
+          className="w-full py-3.5 rounded-2xl bg-foreground text-background text-[14px] font-['Inter'] font-medium disabled:opacity-50">
           {add.isPending ? "Publishing…" : "Publish story"}
-        </button>
+        </motion.button>
       </div>
     </div>
   );

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Link, useLocation } from "wouter";
+import { motion } from "framer-motion";
 import { ArrowLeft, Lock, Zap } from "lucide-react";
 import { useTitle } from "@/hooks/useTitle";
 import { useAddPost, getCurrentUserId } from "@/lib/store";
@@ -52,7 +53,7 @@ export default function CreateText() {
   return (
     <div className="min-h-screen w-full bg-background flex flex-col">
       <div className="px-5 py-3 flex items-center justify-between">
-        <Link href="/create" className="w-9 h-9 rounded-full border border-border flex items-center justify-center"><ArrowLeft size={16} /></Link>
+        <button onClick={() => setLocation("/")} className="w-9 h-9 rounded-full border border-border flex items-center justify-center"><ArrowLeft size={16} /></button>
         <div className="text-[11px] uppercase tracking-[0.2em] text-muted-foreground">Text poem</div>
         <div className="w-9" />
       </div>
@@ -124,9 +125,11 @@ export default function CreateText() {
       </div>
 
       <div className="px-5 mt-7 mb-10">
-        <button disabled={!title.trim() || !body.trim() || add.isPending} onClick={publish} className="w-full py-3.5 rounded-xl bg-foreground text-background text-[14px] disabled:opacity-50">
+        <motion.button whileTap={{ scale: 0.98 }}
+          disabled={!title.trim() || !body.trim() || add.isPending} onClick={publish}
+          className="w-full py-3.5 rounded-2xl bg-foreground text-background text-[14px] font-['Inter'] font-medium disabled:opacity-50">
           {add.isPending ? "Publishing…" : "Publish poem"}
-        </button>
+        </motion.button>
       </div>
     </div>
   );
