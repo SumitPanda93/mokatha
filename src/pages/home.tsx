@@ -8,8 +8,6 @@ import {
   getCurrentUserId, Post, useIsPostUnlocked,
   usePostsRealtime, useMehfilRealtime, useUnreadCount, useNotificationsRealtime,
 } from "@/lib/store";
-import { useAuthState } from "@/lib/auth";
-import Landing from "@/pages/landing";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -336,8 +334,6 @@ export default function Home() {
   useTitle("Home");
   const [filter, setFilter] = useState<Filter>("For you");
   const [tipPostId, setTipPostId] = useState<string | null>(null);
-  const [guestBrowse, setGuestBrowse] = useState(false);
-  const { ready, user: authUser } = useAuthState();
   const { data: posts = [] } = useFeed();
   const { data: user } = useCurrentUser();
   const { data: mehfils = [] } = useMehfils();
@@ -346,11 +342,6 @@ export default function Home() {
   useMehfilRealtime();
   useNotificationsRealtime();
   const { data: unreadCount = 0 } = useUnreadCount();
-
-  // Auth gate: show premium landing for unauthenticated users
-  if (ready && !authUser && !guestBrowse) {
-    return <Landing onBrowse={() => setGuestBrowse(true)} />;
-  }
 
   const filtered = posts.filter((p) => {
     if (filter === "For you") return true;

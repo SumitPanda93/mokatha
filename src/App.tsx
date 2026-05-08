@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Switch, Route, Router as WouterRouter, useLocation } from "wouter";
 import { QueryClient, QueryClientProvider, useQueryClient } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
@@ -67,6 +67,7 @@ import AdminLogs from "@/pages/admin/logs";
 import MobileShell from "@/components/layout/MobileShell";
 import { AudioProvider } from "@/lib/audioContext";
 import PWAInstallPrompt from "@/components/PWAInstallPrompt";
+import Landing from "@/pages/landing";
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: Infinity } },
@@ -112,6 +113,29 @@ const SettingsPrivacyRoute = withMobile(SettingsPrivacy);
 const SettingsNotifsRoute  = withMobile(SettingsNotifs);
 const SettingsAboutRoute   = withMobile(SettingsAbout);
 const NotFoundRoute        = withMobile(NotFound);
+
+// Auth gate for the home route — renders Landing (no shell) for guests,
+// HomeRoute (with MobileShell + nav) for authenticated users or guest-browse.
+// sessionStorage persists the guest-browse choice within the tab session.
+function HomeGate() {
+  const { ready, user } = useAuthState();
+  const [guestBrowse, setGuestBrowse] = useState(
+    () => sessionStorage.getItem("mk-guest") === "1",
+  );
+
+  if (ready && !user && !guestBrowse) {
+    return (
+      <Landing
+        onBrowse={() => {
+          sessionStorage.setItem("mk-guest", "1");
+          setGuestBrowse(true);
+        }}
+      />
+    );
+  }
+
+  return <HomeRoute />;
+}
 
 function Router() {
   const [location] = useLocation();
@@ -161,9 +185,9 @@ function Router() {
             <Route path="/mehfil/host/:id" component={MehfilHost} />
             <Route path="/mehfil/:id" component={MehfilRoom} />
 
-            {/* Mobile shell pages */}
-            <Route path="/" component={HomeRoute} />
-            <Route path="/home" component={HomeRoute} />
+            {/* Mobile shell pages — HomeGate handles Landing vs feed */}
+            <Route path="/" component={HomeGate} />
+            <Route path="/home" component={HomeGate} />
             <Route path="/search" component={SearchRoute} />
             <Route path="/trending" component={TrendingRoute} />
             <Route path="/notifications" component={NotificationsRoute} />
