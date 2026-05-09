@@ -4,12 +4,8 @@ import { motion } from "framer-motion";
 import { ArrowRight, Phone } from "lucide-react";
 import { signInWithGoogle, sendPhoneOtp, verifyPhoneOtp } from "@/lib/store";
 
-// ─── Literary quotes that rotate ─────────────────────────────────────────────
-const QUOTES = [
-  { text: "Every voice deserves a page.", lang: "en" },
-  { text: "କଥାଟିଏ କହୁଁ, କଥାଟିଏ !", lang: "or" },
-];
-const quote = QUOTES[Math.floor(Date.now() / 86400000) % QUOTES.length];
+// ─── Hero literary line (Odia) ───────────────────────────────────────────────
+const HERO_QUOTE = "କଥାଟିଏ କହୁଁ, କଥାଟିଏ !";
 
 type Mode = "options" | "phone" | "otp";
 
@@ -123,13 +119,13 @@ export default function Landing({ onBrowse }: Props) {
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         transition={{ delay: 0.5, duration: 1.1 }}
-        className="mx-8 mb-8 text-center"
+        className="mx-8 mt-1 mb-10 text-center px-2"
       >
         <div
-          className={`leading-[1.75] tracking-wide ${quote.lang === "or" ? "font-serif text-[17px]" : "font-['Playfair_Display'] text-[16px] italic"}`}
-          style={{ color: "rgba(201,168,76,0.85)" }}
+          className="font-serif italic text-[17px] leading-[1.85] tracking-[0.03em] max-w-[min(20rem,92vw)] mx-auto"
+          style={{ color: "rgba(201,168,76,0.88)" }}
         >
-          {quote.text}
+          {HERO_QUOTE}
         </div>
       </motion.div>
 
