@@ -77,20 +77,20 @@ function FeaturedCard({ post }: { post: Post }) {
 function PostGridItem({ p }: { p: Post }) {
   const isAudio = p.kind === "voice" || p.kind === "reel";
   return (
-    <Link href={`/post/${p.id}`} className="block rounded-xl overflow-hidden bg-card border border-border/60">
-      <div className="relative aspect-[4/5]">
+    <Link href={`/post/${p.id}`} className="block rounded-2xl overflow-hidden bg-card border border-border/50 shadow-sm hover:shadow-md hover:border-terracotta/25 transition-all duration-300 active:scale-[0.992]">
+      <div className="relative aspect-[4/5] bg-muted">
         {p.coverUrl
-          ? <img src={p.coverUrl} alt="" className="w-full h-full object-cover" />
+          ? <img src={p.coverUrl} alt="" className="w-full h-full object-cover" decoding="async" loading="lazy" />
           : <div className="w-full h-full flex items-center justify-center px-3" style={{ background: kindGradient(p.kind) }}>
               <div className="font-['Playfair_Display'] text-[13px] text-white/80 text-center line-clamp-3">{p.title}</div>
             </div>
         }
         {p.accessType && p.accessType !== "free" && (
-          <div className={`absolute top-2 right-2 px-1.5 py-0.5 rounded-full text-[8px] uppercase tracking-wider font-bold ${p.accessType === "premium" ? "bg-plum text-white" : "bg-ochre text-white"}`}>
+          <div className={`absolute top-2.5 right-2.5 px-2 py-0.5 rounded-full text-[8px] uppercase tracking-wider font-bold shadow-sm ${p.accessType === "premium" ? "bg-plum text-white" : "bg-ochre text-white"}`}>
             {p.accessType === "premium" ? "Premium" : `₹${p.minTip}`}
           </div>
         )}
-        <div className="absolute top-2 left-2 flex items-center gap-1 bg-black/50 backdrop-blur-sm rounded-full px-1.5 py-0.5">
+        <div className="absolute top-2.5 left-2.5 flex items-center gap-1 bg-black/45 backdrop-blur-md rounded-full px-2 py-0.5 border border-white/8">
           {kindIcon(p.kind)}
         </div>
         {isAudio && (
@@ -99,7 +99,7 @@ function PostGridItem({ p }: { p: Post }) {
           </div>
         )}
       </div>
-      <div className="p-2.5">
+      <div className="px-3 py-2.5 bg-card/90 backdrop-blur-sm border-t border-border/25">
         <div className="text-[12px] font-['Playfair_Display'] line-clamp-1">{p.title}</div>
         <div className="flex gap-3 text-[10px] text-muted-foreground mt-1">
           <span className="flex items-center gap-1"><Heart size={10} />{p.likes}</span>
@@ -337,13 +337,19 @@ export default function UserProfile() {
       )}
 
       {/* ── Posts grid ── */}
-      <div className="px-5 mt-4 grid grid-cols-2 gap-3 pb-12">
+      <div className="px-5 mt-4 grid grid-cols-2 gap-4 pb-16">
         {(tab === "posts" ? gridPosts : posts).map((p) => (
           <PostGridItem key={p.id} p={p} />
         ))}
         {posts.length === 0 && (
-          <div className="col-span-2 text-center text-muted-foreground text-[13px] py-10 font-['Playfair_Display'] italic">
-            No posts yet.
+          <div className="col-span-2 flex flex-col items-center py-16 px-6 text-center gap-3">
+            <div className="w-14 h-14 rounded-3xl bg-muted/80 border border-border/50 flex items-center justify-center">
+              <FileText size={22} className="text-muted-foreground/60" />
+            </div>
+            <div className="font-['Playfair_Display'] text-[17px] italic text-muted-foreground">Still waters.</div>
+            <p className="text-[12px] text-muted-foreground/65 font-['Inter'] leading-relaxed max-w-[280px]">
+              This creator has not shared a public piece here yet — check back when inspiration strikes.
+            </p>
           </div>
         )}
       </div>

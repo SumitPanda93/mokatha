@@ -25,6 +25,7 @@ import CreateStory from "@/pages/create/story";
 import CreateReel from "@/pages/create/reel";
 import PostDetail from "@/pages/post-detail";
 import PostEdit from "@/pages/post-edit";
+import ReelsBrowse from "@/pages/reels";
 import Profile from "@/pages/profile";
 import UserProfile from "@/pages/user-profile";
 import Followers from "@/pages/followers";
@@ -93,6 +94,7 @@ const CreateStoryRoute     = withMobile(CreateStory);
 const CreateReelRoute      = withMobile(CreateReel);
 const PostDetailRoute      = withMobile(PostDetail);
 const PostEditRoute        = withMobile(PostEdit);
+const ReelsRoute           = withMobile(ReelsBrowse);
 const ProfileRoute         = withMobile(Profile);
 const UserProfileRoute     = withMobile(UserProfile);
 const FollowersRoute       = withMobile(Followers);
@@ -202,6 +204,8 @@ function Router() {
             {/* Post */}
             <Route path="/post/:id/edit" component={PostEditRoute} />
             <Route path="/post/:id" component={PostDetailRoute} />
+
+            <Route path="/reels" component={ReelsRoute} />
 
             {/* Messages */}
             <Route path="/messages" component={MessagesRoute} />

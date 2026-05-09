@@ -7,8 +7,7 @@ import { signInWithGoogle, sendPhoneOtp, verifyPhoneOtp } from "@/lib/store";
 // ─── Literary quotes that rotate ─────────────────────────────────────────────
 const QUOTES = [
   { text: "Every voice deserves a page.", lang: "en" },
-  { text: "କଥାଟିଏ କହୁଁ , କଥାଟିଏ !", lang: "or" },
-  { text: "Stories that breathe. Voices that last.", lang: "en" },
+  { text: "କଥାଟିଏ କହୁଁ, କଥାଟିଏ !", lang: "or" },
 ];
 const quote = QUOTES[Math.floor(Date.now() / 86400000) % QUOTES.length];
 
@@ -127,7 +126,7 @@ export default function Landing({ onBrowse }: Props) {
         className="mx-8 mb-8 text-center"
       >
         <div
-          className={`text-[16px] leading-[1.7] ${quote.lang === "or" ? "font-serif" : "font-['Playfair_Display'] italic"}`}
+          className={`leading-[1.75] tracking-wide ${quote.lang === "or" ? "font-serif text-[17px]" : "font-['Playfair_Display'] text-[16px] italic"}`}
           style={{ color: "rgba(201,168,76,0.85)" }}
         >
           {quote.text}

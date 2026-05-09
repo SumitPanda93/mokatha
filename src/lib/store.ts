@@ -1,5 +1,6 @@
 import { useEffect } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import type { RealtimeChannel } from "@supabase/supabase-js";
+import { useQuery, useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { supabase } from "@/lib/supabase";
 import { getAuthUserId } from "@/lib/auth";
@@ -1971,18 +1972,32 @@ export function useClaimDailyStreakAuto() {
 
 // ─── Realtime hooks ───────────────────────────────────────────────────────────
 
+let postsRealtimeRefCount = 0;
+let postsRealtimeChannel: RealtimeChannel | null = null;
+const qcPostsRealtimeRef: { current: QueryClient | null } = { current: null };
+
 export function usePostsRealtime() {
   const qc = useQueryClient();
+  qcPostsRealtimeRef.current = qc;
   useEffect(() => {
-    const channel = supabase
-      .channel("realtime:posts")
-      .on("postgres_changes", { event: "*", schema: "public", table: "posts" }, () => {
-        qc.invalidateQueries({ queryKey: QK.posts });
-        qc.invalidateQueries({ queryKey: QK.trendingPosts });
-      })
-      .subscribe();
-    return () => { supabase.removeChannel(channel); };
-  }, [qc]);
+    postsRealtimeRefCount++;
+    if (!postsRealtimeChannel) {
+      postsRealtimeChannel = supabase
+        .channel("realtime:posts")
+        .on("postgres_changes", { event: "*", schema: "public", table: "posts" }, () => {
+          qcPostsRealtimeRef.current?.invalidateQueries({ queryKey: QK.posts });
+          qcPostsRealtimeRef.current?.invalidateQueries({ queryKey: QK.trendingPosts });
+        })
+        .subscribe();
+    }
+    return () => {
+      postsRealtimeRefCount--;
+      if (postsRealtimeRefCount <= 0 && postsRealtimeChannel) {
+        supabase.removeChannel(postsRealtimeChannel);
+        postsRealtimeChannel = null;
+      }
+    };
+  }, []);
 }
 
 export function useMehfilRealtime(mehfilId?: string) {
@@ -2000,19 +2015,40 @@ export function useMehfilRealtime(mehfilId?: string) {
   }, [qc, mehfilId]);
 }
 
+let notifRealtimeRefCount = 0;
+let notifRealtimeChannel: RealtimeChannel | null = null;
+let notifRealtimeUserId: string | null = null;
+const qcNotifRealtimeRef: { current: QueryClient | null } = { current: null };
+
 export function useNotificationsRealtime() {
   const qc = useQueryClient();
   const me = getCurrentUserId();
+  qcNotifRealtimeRef.current = qc;
   useEffect(() => {
     if (!me) return;
-    const channel = supabase
-      .channel("realtime:notifications")
-      .on("postgres_changes", { event: "INSERT", schema: "public", table: "notifications", filter: `recipient_id=eq.${me}` }, () => {
-        qc.invalidateQueries({ queryKey: QK.notifications });
-      })
-      .subscribe();
-    return () => { supabase.removeChannel(channel); };
-  }, [qc, me]);
+    notifRealtimeRefCount++;
+    if (!notifRealtimeChannel || notifRealtimeUserId !== me) {
+      if (notifRealtimeChannel) {
+        supabase.removeChannel(notifRealtimeChannel);
+        notifRealtimeChannel = null;
+      }
+      notifRealtimeUserId = me;
+      notifRealtimeChannel = supabase
+        .channel("realtime:notifications")
+        .on("postgres_changes", { event: "INSERT", schema: "public", table: "notifications", filter: `recipient_id=eq.${me}` }, () => {
+          qcNotifRealtimeRef.current?.invalidateQueries({ queryKey: QK.notifications });
+        })
+        .subscribe();
+    }
+    return () => {
+      notifRealtimeRefCount--;
+      if (notifRealtimeRefCount <= 0 && notifRealtimeChannel) {
+        supabase.removeChannel(notifRealtimeChannel);
+        notifRealtimeChannel = null;
+        notifRealtimeUserId = null;
+      }
+    };
+  }, [me]);
 }
 
 // ─── Admin convenience hooks ─────────────────────────────────────────────────

@@ -241,17 +241,20 @@ export default function Profile() {
       </div>
 
       {/* Posts grid */}
-      <div className="px-5 mt-4 grid grid-cols-2 gap-3 pb-10">
+      <div className="px-5 mt-4 grid grid-cols-2 gap-4 pb-14">
         {displayed.map((p) => <ProfilePostCard key={p.id} post={p} />)}
         {displayed.length === 0 && (
-          <div className="col-span-2 py-14 text-center flex flex-col items-center gap-2">
-            <div className="font-['Playfair_Display'] text-[16px] italic text-muted-foreground">
-              {tab === "saved" ? "Nothing saved yet." : "No works published yet."}
+          <div className="col-span-2 py-16 text-center flex flex-col items-center gap-3 px-4">
+            <div className="w-14 h-14 rounded-3xl bg-gradient-to-br from-muted to-muted/50 border border-border/55 flex items-center justify-center shadow-sm">
+              <Heart size={22} className="text-muted-foreground/65" />
             </div>
-            <div className="text-[12px] text-muted-foreground/60 font-['Inter']">
+            <div className="font-['Playfair_Display'] text-[17px] italic text-muted-foreground leading-snug">
+              {tab === "saved" ? "Your shelf is waiting." : "No works published yet."}
+            </div>
+            <div className="text-[12px] text-muted-foreground/65 font-['Inter'] leading-relaxed max-w-[280px]">
               {tab === "saved"
-                ? "Stories you bookmark will live here."
-                : "Your voice deserves to be heard."}
+                ? "Save pieces that move you — they rest here like folded letters."
+                : "Share a voice note or a line of poetry when the moment feels right."}
             </div>
           </div>
         )}
@@ -266,14 +269,14 @@ function ProfilePostCard({ post }: { post: Post }) {
     voice: "bg-ochre", text: "bg-sage", story: "bg-violet", reel: "bg-plum",
   };
   return (
-    <Link href={`/post/${post.id}`} className="block rounded-xl overflow-hidden bg-card border border-border hover:border-terracotta transition-colors">
+    <Link href={`/post/${post.id}`} className="block rounded-2xl overflow-hidden bg-card border border-border/55 shadow-md hover:shadow-xl hover:border-terracotta/35 transition-all duration-300 active:scale-[0.992]">
       <div className="relative aspect-[4/5] bg-muted">
         {post.coverUrl
-          ? <img src={post.coverUrl} alt="" className="w-full h-full object-cover" />
+          ? <img src={post.coverUrl} alt="" className="w-full h-full object-cover" decoding="async" loading="lazy" />
           : <div className="w-full h-full flex items-center justify-center p-3 text-center font-['Playfair_Display'] text-[15px] text-foreground/80" style={{ background: "linear-gradient(135deg,hsl(var(--ochre)/0.15),hsl(var(--plum)/0.15))" }}>{post.title}</div>
         }
-        <div className="absolute top-2 left-2">
-          <span className={`text-[8px] text-white px-1.5 py-0.5 rounded-full ${KIND_COLOR[post.kind]}`}>{post.kind.toUpperCase()}</span>
+        <div className="absolute top-2.5 left-2.5">
+          <span className={`text-[8px] text-white px-2 py-0.5 rounded-full shadow-sm ${KIND_COLOR[post.kind]}`}>{post.kind.toUpperCase()}</span>
         </div>
         {isAudio && (
           <div className="absolute bottom-2 left-2 w-7 h-7 rounded-full bg-white/90 flex items-center justify-center shadow">
@@ -281,7 +284,7 @@ function ProfilePostCard({ post }: { post: Post }) {
           </div>
         )}
       </div>
-      <div className="p-2.5">
+      <div className="px-3 py-2.5 border-t border-border/30 bg-card/80 backdrop-blur-[2px]">
         <div className="text-[12px] font-['Playfair_Display'] line-clamp-1">{post.title}</div>
         <div className="flex gap-3 text-[10px] text-muted-foreground mt-1">
           <span className="flex items-center gap-1"><Heart size={9} />{post.likes.toLocaleString()}</span>

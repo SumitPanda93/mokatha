@@ -139,8 +139,17 @@ export default function Wallet() {
           </div>
         )}
         {!txLoading && sorted.length === 0 && (
-          <div className="py-12 text-center text-muted-foreground text-[13px] font-['Playfair_Display'] italic">
-            Your first appreciation will appear here.
+          <div className="py-14 text-center px-4 relative">
+            <div className="absolute left-1/2 top-6 -translate-x-1/2 w-40 h-40 rounded-full bg-ochre/[0.07] blur-3xl pointer-events-none" />
+            <div className="relative">
+              <div className="w-12 h-12 rounded-2xl bg-muted/90 border border-border/60 flex items-center justify-center mx-auto mb-4">
+                <TrendingUp size={20} className="text-muted-foreground/55" />
+              </div>
+              <div className="font-['Playfair_Display'] text-[16px] italic text-muted-foreground mb-2">Ledger at rest</div>
+              <p className="text-[12px] text-muted-foreground/70 font-['Inter'] leading-relaxed max-w-xs mx-auto">
+                Your first appreciation will appear here — quiet entries in the margin of your craft.
+              </p>
+            </div>
           </div>
         )}
         {!txLoading && sorted.slice(0, showing).map((tx) => <TxRow key={tx.id} tx={tx} />)}

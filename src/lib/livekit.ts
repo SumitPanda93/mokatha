@@ -112,6 +112,15 @@ export async function connectToMehfil(
     });
   }
 
+  /** Resume remote tracks after tab focus / mobile unlock (autoplay policies). */
+  function resumePlaybackOnVisible() {
+    if (document.visibilityState !== "visible") return;
+    void room.startAudio().catch(() => {});
+    audioElements.forEach((el) => {
+      if (el.src) tryPlay(el);
+    });
+  }
+
   room.on(RoomEvent.TrackSubscribed, (track: RemoteTrack, _pub, _participant: RemoteParticipant) => {
     if (track.kind === Track.Kind.Audio) {
       void room.startAudio().catch(() => {});
@@ -178,6 +187,7 @@ export async function connectToMehfil(
   });
 
   room.on(RoomEvent.Disconnected, () => {
+    document.removeEventListener("visibilitychange", resumePlaybackOnVisible);
     // Full cleanup of all audio elements
     audioElements.forEach((el) => { el.pause(); el.remove(); });
     audioElements.length = 0;
@@ -192,6 +202,7 @@ export async function connectToMehfil(
     console.log(`[LiveKit] connected to room ${roomId} as ${userId}`);
     // Helps listeners hear remote audio on mobile Safari / Chrome autoplay rules
     await room.startAudio().catch(() => {});
+    document.addEventListener("visibilitychange", resumePlaybackOnVisible);
   } catch (err) {
     console.error("[LiveKit] connect error", err);
     callbacks.onError?.(err instanceof Error ? err : new Error(String(err)));
@@ -211,6 +222,7 @@ export async function connectToMehfil(
     room,
 
     disconnect() {
+      document.removeEventListener("visibilitychange", resumePlaybackOnVisible);
       audioElements.forEach((el) => { el.pause(); el.remove(); });
       audioElements.length = 0;
       document.querySelectorAll<HTMLAudioElement>(`audio[data-livekit-room="${roomId}"]`).forEach((el) => {

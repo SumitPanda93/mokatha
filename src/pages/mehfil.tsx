@@ -190,6 +190,7 @@ export default function MehfilRoom() {
   const chatRef     = useRef<HTMLDivElement>(null);
   const livekitRef  = useRef<LKRoom | null>(null);
   const lkPublishModeRef = useRef<boolean | null>(null);
+  const lkReconnectScheduledRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const endedRef = useRef(false);
   const mutedRef = useRef(false);
   const prevQueueStatusRef = useRef<string | undefined>(undefined);
@@ -208,6 +209,7 @@ export default function MehfilRoom() {
   const activeSpeaker = queue.find((q) => q.status === "speaking");
   const pendingQueue  = queue.filter((q) => q.status === "pending");
   const myEntry       = queue.find((q) => q.userId === me);
+  const canPublishNow = isHost || myEntry?.status === "speaking";
   const listenerCount = presence.length;
   const activeSpeakerPresence = activeSpeaker
     ? presence.find((p) => p.user_id === activeSpeaker.userId)
@@ -240,33 +242,57 @@ export default function MehfilRoom() {
     if (lkPublishModeRef.current === wantPublish) return;
 
     let cancelled = false;
-    void (async () => {
-      livekitRef.current?.disconnect();
-      livekitRef.current = null;
-      const cbs = lkCbRef.current;
-      const ctrl = await connectToMehfil(id, me, wantPublish, {
-        onConnectionStateChange: (state) => cbs.setLkConnState(state),
-        onParticipantCountChange: () => {},
-        onError: (err) => console.error("[LiveKit] reconnect error", err),
-        onAudioBlocked: () => cbs.setAudioBlocked(true),
-        onReconnecting: () => toast("Reconnecting audio…", { duration: 1800 }),
-        onReconnected: () => toast.success("Audio back online", { duration: 1600 }),
-      });
-      if (cancelled || !ctrl) return;
-      livekitRef.current = ctrl;
-      lkPublishModeRef.current = wantPublish;
-      if (wantPublish && myEntry?.status === "speaking") {
-        await ctrl.setMicEnabled(true);
-        setMuted(false);
-      } else if (wantPublish && isHost) {
-        await ctrl.setMicEnabled(!mutedRef.current);
-      } else {
-        await ctrl.setMicEnabled(false);
-        setMuted(true);
+    if (lkReconnectScheduledRef.current) clearTimeout(lkReconnectScheduledRef.current);
+    lkReconnectScheduledRef.current = setTimeout(() => {
+      lkReconnectScheduledRef.current = null;
+      void (async () => {
+        livekitRef.current?.disconnect();
+        livekitRef.current = null;
+        const cbs = lkCbRef.current;
+        const ctrl = await connectToMehfil(id, me, wantPublish, {
+          onConnectionStateChange: (state) => cbs.setLkConnState(state),
+          onParticipantCountChange: () => {},
+          onError: (err) => console.error("[LiveKit] reconnect error", err),
+          onAudioBlocked: () => cbs.setAudioBlocked(true),
+          onReconnecting: () => toast("Reconnecting audio…", { duration: 1800 }),
+          onReconnected: () => toast.success("Audio back online", { duration: 1600 }),
+        });
+        if (cancelled || !ctrl) return;
+        livekitRef.current = ctrl;
+        lkPublishModeRef.current = wantPublish;
+        if (wantPublish && myEntry?.status === "speaking") {
+          await ctrl.setMicEnabled(true);
+          setMuted(false);
+        } else if (wantPublish && isHost) {
+          await ctrl.setMicEnabled(!mutedRef.current);
+        } else {
+          await ctrl.setMicEnabled(false);
+          setMuted(true);
+        }
+      })();
+    }, 160);
+
+    return () => {
+      cancelled = true;
+      if (lkReconnectScheduledRef.current) {
+        clearTimeout(lkReconnectScheduledRef.current);
+        lkReconnectScheduledRef.current = null;
       }
-    })();
-    return () => { cancelled = true; };
+    };
   }, [joined, isHost, myEntry?.status, id, me]);
+
+  // ── Sync mute indicator with LiveKit after connect / role changes ──
+  useEffect(() => {
+    if (!lkConnected || !livekitRef.current) return;
+    const publishing = isHost || myEntry?.status === "speaking";
+    if (!publishing) return;
+    try {
+      const micOn = livekitRef.current.room.localParticipant.isMicrophoneEnabled;
+      setMuted(!micOn);
+    } catch {
+      /* ignore */
+    }
+  }, [lkConnected, isHost, myEntry?.status]);
 
   // ── Listener: host ended Mehfil remotely ──
   useEffect(() => {
@@ -335,8 +361,12 @@ export default function MehfilRoom() {
 
     const syncPresence = () => {
       const state = channel.presenceState<PresencePayload>();
-      // Use full sync to prevent ghost participants
-      setPresence(Object.values(state).flat());
+      const merged = Object.values(state).flat() as PresencePayload[];
+      const byUser = new Map<string, PresencePayload>();
+      for (const row of merged) {
+        if (row?.user_id) byUser.set(row.user_id, row);
+      }
+      setPresence(Array.from(byUser.values()));
     };
 
     channel
@@ -377,6 +407,10 @@ export default function MehfilRoom() {
   };
 
   const leaveRoom = () => {
+    if (lkReconnectScheduledRef.current) {
+      clearTimeout(lkReconnectScheduledRef.current);
+      lkReconnectScheduledRef.current = null;
+    }
     channelRef.current?.untrack();
     if (channelRef.current) supabase.removeChannel(channelRef.current);
     channelRef.current = null;
@@ -395,6 +429,10 @@ export default function MehfilRoom() {
   };
 
   const finalizeHostEndMehfil = () => {
+    if (lkReconnectScheduledRef.current) {
+      clearTimeout(lkReconnectScheduledRef.current);
+      lkReconnectScheduledRef.current = null;
+    }
     channelRef.current?.untrack();
     if (channelRef.current) supabase.removeChannel(channelRef.current);
     channelRef.current = null;
@@ -410,6 +448,10 @@ export default function MehfilRoom() {
 
   useEffect(() => {
     return () => {
+      if (lkReconnectScheduledRef.current) {
+        clearTimeout(lkReconnectScheduledRef.current);
+        lkReconnectScheduledRef.current = null;
+      }
       channelRef.current?.untrack();
       if (channelRef.current) supabase.removeChannel(channelRef.current);
       livekitRef.current?.disconnect();
@@ -758,7 +800,7 @@ export default function MehfilRoom() {
 
         {mehfil.isLive && (
           <div className="flex items-center gap-3 mt-3">
-            <AudioBars active={!muted} />
+            <AudioBars active={canPublishNow ? !muted : !!activeSpeaker} />
             <div className="text-[11px] font-['Inter'] flex items-center gap-1.5"
               style={{ color: "rgba(245,243,239,0.60)" }}>
               <span className="w-1.5 h-1.5 rounded-full" style={{ background: "#6BE89E" }} />

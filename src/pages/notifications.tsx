@@ -161,8 +161,11 @@ export default function Notifications() {
       {/* Content */}
       <div className="px-4 pt-3">
         {isLoading ? (
-          <div className="flex items-center justify-center py-20">
+          <div className="flex flex-col items-center justify-center py-20 gap-3">
             <div className="w-7 h-7 rounded-full border-2 border-terracotta border-t-transparent animate-spin" />
+            <p className="text-[12px] font-['Playfair_Display'] italic text-muted-foreground/80 text-center px-6">
+              Sorting whispers…
+            </p>
           </div>
         ) : list.length === 0 ? (
           <div className="py-20 text-center">

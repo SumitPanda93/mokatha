@@ -119,9 +119,13 @@ function ListeningMode({ onClose }: { onClose: () => void }) {
 
 // ─── Mini Player ──────────────────────────────────────────────────────────────
 
-function MiniPlayer({ onExpand }: { onExpand: () => void }) {
+function MiniPlayer({ onExpand, immersive }: { onExpand: () => void; immersive?: boolean }) {
   const { track, playing, progressPct, toggle, dismiss } = useAudioPlayer();
   if (!track) return null;
+
+  const bottomOffset = immersive
+    ? "calc(14px + env(safe-area-inset-bottom))"
+    : "calc(72px + max(env(safe-area-inset-bottom), 0px) + 8px)";
 
   return (
     <motion.div
@@ -129,9 +133,8 @@ function MiniPlayer({ onExpand }: { onExpand: () => void }) {
       animate={{ y: 0, opacity: 1 }}
       exit={{ y: 80, opacity: 0 }}
       transition={{ type: "spring", damping: 26, stiffness: 300 }}
-      // Sits above the fixed nav. Nav is ~72px tall + safe-area (avg 20px) = ~92px
-      className="fixed bottom-[80px] left-2 right-2 z-40"
-      style={{ bottom: "calc(72px + max(env(safe-area-inset-bottom), 0px) + 8px)" }}
+      className="fixed left-2 right-2 z-40"
+      style={{ bottom: bottomOffset }}
     >
       <div className="rounded-2xl overflow-hidden bg-background border border-border/70"
         style={{ boxShadow: "0 8px 32px rgba(0,0,0,0.15), 0 2px 8px rgba(0,0,0,0.1)" }}>
@@ -201,7 +204,7 @@ function CreateSheet({ onClose, navigate }: { onClose: () => void; navigate: (pa
         initial={{ y: "100%" }}
         animate={{ y: 0 }}
         exit={{ y: "100%" }}
-        transition={{ type: "spring", damping: 26, stiffness: 340, mass: 0.9 }}
+        transition={{ type: "spring", damping: 32, stiffness: 320, mass: 0.95 }}
         className="relative rounded-t-[32px] bg-background/96 backdrop-blur-2xl border-t border-border/60 px-5 pt-4"
         style={{ paddingBottom: "max(env(safe-area-inset-bottom), 28px)" }}
       >
@@ -257,6 +260,8 @@ export default function MobileShell({ children }: MobileShellProps) {
   const [createOpen, setCreateOpen] = useState(false);
   const { track } = useAudioPlayer();
 
+  const immersiveReels = location.startsWith("/reels");
+
   const navItems = [
     { id: "home",     label: "Home",     path: "/",         icon: Home },
     { id: "mehfil",   label: "Mehfil",   path: "/mehfil",   icon: Radio },
@@ -270,20 +275,24 @@ export default function MobileShell({ children }: MobileShellProps) {
 
   // Nav height = 72px content + safe-area. Content needs matching bottom padding.
   const navContentHeight = 72;
+  const bottomPad = immersiveReels
+    ? `calc(${track ? "76px + " : ""}max(env(safe-area-inset-bottom), 10px))`
+    : `calc(${navContentHeight}px + ${track ? "76px + " : ""}max(env(safe-area-inset-bottom), 8px))`;
 
   return (
     <div className="w-full bg-background text-foreground" style={{ minHeight: "100dvh" }}>
       {/* Main content — bottom padding accounts for fixed nav + optional mini player */}
-      <div style={{ paddingBottom: `calc(${navContentHeight}px + ${track ? "76px + " : ""}max(env(safe-area-inset-bottom), 8px))` }}>
+      <div style={{ paddingBottom: bottomPad }}>
         {children}
       </div>
 
       {/* Mini player — fixed, floats above nav */}
       <AnimatePresence>
-        {track && <MiniPlayer onExpand={() => setListeningMode(true)} />}
+        {track && <MiniPlayer immersive={immersiveReels} onExpand={() => setListeningMode(true)} />}
       </AnimatePresence>
 
       {/* Fixed bottom nav */}
+      {!immersiveReels && (
       <nav
         className="fixed bottom-0 left-0 right-0 z-50 bg-background/95 backdrop-blur-xl border-t border-border"
         style={{ paddingBottom: "max(env(safe-area-inset-bottom), 8px)" }}
@@ -319,8 +328,10 @@ export default function MobileShell({ children }: MobileShellProps) {
           })}
         </div>
       </nav>
+      )}
 
       {/* Create sheet */}
+      {!immersiveReels && (
       <AnimatePresence>
         {createOpen && (
           <CreateSheet
@@ -329,6 +340,7 @@ export default function MobileShell({ children }: MobileShellProps) {
           />
         )}
       </AnimatePresence>
+      )}
 
       {/* Listening Mode overlay */}
       <AnimatePresence>

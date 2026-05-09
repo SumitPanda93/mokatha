@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link } from "wouter";
-import { Search, Heart, MessageCircle, Bookmark, Play, Mic, Lock, Zap, Bell } from "lucide-react";
+import { Search, Heart, MessageCircle, Bookmark, Play, Mic, Lock, Zap, Bell, Layers } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useTitle } from "@/hooks/useTitle";
 import {
@@ -65,12 +65,12 @@ function VoiceCard({ post, onTip }: { post: Post; onTip: () => void }) {
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ type: "spring", damping: 24, stiffness: 200 }}
-      className="rounded-2xl overflow-hidden shadow-md"
+      className="rounded-2xl overflow-hidden shadow-lg shadow-black/[0.06] ring-1 ring-black/[0.05]"
     >
       {/* Hero area */}
       <Link href={`/post/${post.id}`} className="relative block h-[192px] overflow-hidden">
         {post.coverUrl
-          ? <img src={post.coverUrl} alt="" className="absolute inset-0 w-full h-full object-cover" />
+          ? <img src={post.coverUrl} alt="" className="absolute inset-0 w-full h-full object-cover" decoding="async" loading="lazy" />
           : <div className="absolute inset-0" style={{ background: "linear-gradient(135deg, #1C0F06 0%, #2E1A0C 40%, #1A0D18 100%)" }} />
         }
         {/* Overlay */}
@@ -157,12 +157,12 @@ function TextCard({ post, onTip }: { post: Post; onTip: () => void }) {
       initial={{ opacity: 0, y: 6 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ type: "spring", damping: 24, stiffness: 200 }}
-      className="rounded-2xl overflow-hidden bg-card border border-border/60"
+      className="rounded-2xl overflow-hidden bg-card border border-border/65 shadow-md hover:shadow-lg hover:border-border transition-[box-shadow,border-color] duration-300 active:scale-[0.995]"
     >
       {/* Cover image (optional) */}
       {post.coverUrl && (
         <Link href={`/post/${post.id}`} className="block relative">
-          <img src={post.coverUrl} alt="" className="w-full aspect-[16/9] object-cover" />
+          <img src={post.coverUrl} alt="" className="w-full aspect-[16/9] object-cover bg-muted" decoding="async" loading="lazy" />
           <div className="absolute inset-0 bg-gradient-to-t from-black/30 to-transparent" />
           <div className="absolute top-3 left-3 flex gap-2">
             <span className="text-[9px] font-['Inter'] tracking-[0.18em] uppercase px-2.5 py-1 rounded-full font-semibold"
@@ -255,13 +255,21 @@ function ReelCard({ post, onTip }: { post: Post; onTip: () => void }) {
     <motion.div
       initial={{ opacity: 0, y: 6 }}
       animate={{ opacity: 1, y: 0 }}
-      className="rounded-3xl overflow-hidden shadow-xl relative"
+      className="rounded-3xl overflow-hidden shadow-xl relative ring-1 ring-black/[0.04]"
       style={{ boxShadow: "0 12px 48px rgba(0,0,0,0.28)" }}
     >
       {/* Full-height cinematic canvas */}
-      <Link href={`/post/${post.id}`} className="relative block overflow-hidden" style={{ aspectRatio: "4/5" }}>
+      <div className="relative overflow-hidden" style={{ aspectRatio: "4/5" }}>
+        <Link href={`/post/${post.id}`} className="absolute inset-0 z-[1]" aria-label={`Open reel: ${post.title}`} />
+        <Link
+          href={`/reels?focus=${post.id}`}
+          className="absolute top-4 right-4 z-[5] pointer-events-auto flex items-center justify-center w-9 h-9 rounded-full backdrop-blur-md border border-white/28 bg-black/22 active:scale-[0.93] transition-transform"
+          aria-label="Open immersive reels"
+        >
+          <Layers size={15} className="text-white/90" />
+        </Link>
         {post.coverUrl ? (
-          <img src={post.coverUrl} alt="" className="absolute inset-0 w-full h-full object-cover scale-[1.02] transition-transform duration-700" />
+          <img src={post.coverUrl} alt="" className="absolute inset-0 w-full h-full object-cover scale-[1.02] transition-transform duration-700 bg-muted" decoding="async" loading="lazy" />
         ) : (
           <div className="absolute inset-0" style={{ background: ambientBg }} />
         )}
@@ -330,7 +338,7 @@ function ReelCard({ post, onTip }: { post: Post; onTip: () => void }) {
             <span className="line-clamp-3">{post.title}</span>
           </div>
         </div>
-      </Link>
+      </div>
 
       {/* Action bar — floats below, part of card */}
       <div className="px-4 py-3 flex items-center gap-1.5"
@@ -560,11 +568,18 @@ export default function Home() {
       )}
 
       {/* ── Section heading ── */}
-      <div className="px-5 pt-3 pb-2 flex items-center gap-2">
+      <div className="px-5 pt-3 pb-2 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
         <div className="w-1 h-1 rounded-full bg-terracotta" />
         <div className="text-[10px] font-['Inter'] tracking-[0.28em] uppercase font-semibold text-muted-foreground">
           {filter === "For you" ? "Today's voices" : filter}
         </div>
+        </div>
+        {filter === "Reel" && (
+          <Link href="/reels" className="text-[9px] font-['Inter'] tracking-[0.22em] uppercase text-terracotta/90 shrink-0 py-1 px-2 rounded-full border border-terracotta/25 bg-terracotta/[0.06] active:scale-[0.97] transition-transform">
+            Fullscreen
+          </Link>
+        )}
       </div>
 
       {/* ── Posts ── */}
@@ -572,8 +587,8 @@ export default function Home() {
         {feedLoading && (
           <div className="space-y-4 animate-pulse">
             {Array.from({ length: 3 }).map((_, i) => (
-              <div key={i} className="rounded-2xl overflow-hidden bg-card border border-border">
-                <div className="aspect-[4/3] bg-muted" />
+              <div key={i} className="rounded-2xl overflow-hidden bg-card border border-border min-h-[280px]">
+                <div className="aspect-[4/5] max-h-[320px] bg-muted" />
                 <div className="p-4 space-y-2">
                   <div className="h-4 bg-muted rounded-full w-3/4" />
                   <div className="h-3 bg-muted rounded-full w-1/2" />
