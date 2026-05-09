@@ -33,16 +33,16 @@ function TxRow({ tx }: { tx: Transaction }) {
   const label = tx.note || (peer ? (isCredit ? `From ${peer.displayName}` : `To ${peer.displayName}`) : tx.kind);
   const date = new Date(tx.createdAt).toLocaleDateString("en-IN", { day: "numeric", month: "short" });
   return (
-    <div className="flex items-center gap-3 py-3 border-b border-border last:border-0">
+    <div className="flex items-center gap-3.5 py-3.5 px-2 -mx-2 rounded-xl border border-transparent hover:bg-muted/30 hover:border-border/35 transition-all duration-300">
       <TxIcon kind={tx.kind} />
       <div className="flex-1 min-w-0">
-        <div className="text-[14px] font-['Playfair_Display'] line-clamp-1">{label}</div>
-        <div className="text-[10px] text-muted-foreground mt-0.5 flex items-center gap-2">
+        <div className="text-[15px] font-['Playfair_Display'] leading-snug line-clamp-2 text-foreground/95">{label}</div>
+        <div className="text-[10px] text-muted-foreground/85 mt-1 flex items-center gap-2 font-['Inter']">
           {date}
           {tx.status === "pending" && <span className="text-ochre text-[9px] uppercase tracking-[0.15em] border border-ochre rounded-full px-1.5 py-0.5">pending</span>}
         </div>
       </div>
-      <div className={`text-[15px] font-['Inter'] font-medium ${isCredit ? "text-sage" : "text-plum"}`}>
+      <div className={`text-[14px] font-['Inter'] font-semibold tabular-nums shrink-0 ${isCredit ? "text-sage" : "text-plum"}`}>
         {isCredit ? "+" : "−"}{FMT(tx.amount)}
       </div>
     </div>
@@ -103,15 +103,15 @@ export default function Wallet() {
 
       {/* Stats mini cards */}
       <div className="px-5 py-4 flex gap-3">
-        <div className="flex-1 border border-border rounded-xl p-3 bg-card">
+        <div className="flex-1 border border-border rounded-xl p-3 bg-card shadow-sm shadow-black/[0.04]">
           <div className="text-[9px] font-['Inter'] tracking-[0.15em] uppercase text-terracotta mb-1">Tips</div>
           <div className="text-[17px] font-['Playfair_Display']">{FMT(tips)}</div>
         </div>
-        <div className="flex-1 border border-border rounded-xl p-3 bg-card">
+        <div className="flex-1 border border-border rounded-xl p-3 bg-card shadow-sm shadow-black/[0.04]">
           <div className="text-[9px] font-['Inter'] tracking-[0.15em] uppercase text-violet mb-1">Earnings</div>
           <div className="text-[17px] font-['Playfair_Display']">{FMT(earnings)}</div>
         </div>
-        <div className="flex-1 border border-border rounded-xl p-3 bg-card">
+        <div className="flex-1 border border-border rounded-xl p-3 bg-card shadow-sm shadow-black/[0.04]">
           <div className="text-[9px] font-['Inter'] tracking-[0.15em] uppercase text-ochre mb-1">Mehfil</div>
           <div className="text-[17px] font-['Playfair_Display']">{FMT(mehfilTips)}</div>
         </div>
@@ -152,7 +152,11 @@ export default function Wallet() {
             </div>
           </div>
         )}
-        {!txLoading && sorted.slice(0, showing).map((tx) => <TxRow key={tx.id} tx={tx} />)}
+        {!txLoading && sorted.slice(0, showing).map((tx, i) => (
+          <div key={tx.id} className={i > 0 ? "border-t border-border/35 pt-1 mt-1" : ""}>
+            <TxRow tx={tx} />
+          </div>
+        ))}
         {sorted.length > showing && (
           <button onClick={() => setShowing((s) => s + 8)} className="w-full py-3 mt-2 text-[12px] text-muted-foreground hover:text-foreground transition-colors">
             View more

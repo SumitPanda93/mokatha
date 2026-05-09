@@ -105,12 +105,12 @@ export default function Profile() {
       )}
 
       {/* ── Hero ── */}
-      <div className="px-6 pt-4 pb-5 relative">
+      <div className="px-6 pt-6 pb-6 relative">
         {/* Ambient glow */}
         <div className="absolute top-0 right-4 w-[120px] h-[120px] rounded-full bg-ochre/15 blur-3xl pointer-events-none" />
 
         {/* Avatar + name row */}
-        <div className="flex items-center gap-4 mb-5 relative">
+        <div className="flex items-start gap-5 mb-7 relative">
           <div className="relative shrink-0">
             <div className="absolute -inset-[3px] rounded-full opacity-70 blur-[3px]"
               style={{ background: "linear-gradient(135deg, hsl(var(--terracotta)), hsl(var(--ochre)), hsl(var(--plum)))" }} />
@@ -135,7 +135,7 @@ export default function Profile() {
 
         {/* Ink badges */}
         {ink && ink.badges.length > 0 && (
-          <div className="flex gap-2 mb-4 flex-wrap">
+          <div className="flex gap-2 mb-5 flex-wrap">
             {ink.badges.map((b) => (
               <span key={b} className="text-[10px] px-2.5 py-1 rounded-full bg-ochre/10 text-ochre border border-ochre/20">
                 {BADGE_LABELS[b]}
@@ -151,8 +151,9 @@ export default function Profile() {
           </div>
         )}
 
-        {/* ── Primary stats row: Followers / Following / Works ── */}
-        <div className="grid grid-cols-3 gap-0 mb-1">
+        {/* ── Primary stats — grouped for calmer hierarchy ── */}
+        <div className="rounded-2xl border border-border/40 bg-card/45 backdrop-blur-[2px] px-2 py-4 mb-6">
+          <div className="grid grid-cols-3 gap-0 divide-x divide-border/30">
           <Link href={`/u/${user.handle}/followers`}
             className="text-center py-2.5 rounded-xl hover:bg-card transition-colors">
             <div className="text-[20px] font-['Playfair_Display'] leading-none">{followersCount.toLocaleString()}</div>
@@ -166,6 +167,7 @@ export default function Profile() {
           <div className="text-center py-2.5">
             <div className="text-[20px] font-['Playfair_Display'] leading-none">{posts.length}</div>
             <div className="text-[9px] uppercase tracking-[0.14em] text-muted-foreground mt-0.5">works</div>
+          </div>
           </div>
         </div>
 

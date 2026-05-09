@@ -194,6 +194,7 @@ export default function MehfilRoom() {
   const endedRef = useRef(false);
   const mutedRef = useRef(false);
   const prevQueueStatusRef = useRef<string | undefined>(undefined);
+  const prevLkConnRef = useRef<ConnectionState | null>(null);
 
   const [lkConnState, setLkConnState] = useState<ConnectionState | null>(null);
   const [audioBlocked, setAudioBlocked] = useState(false);
@@ -270,7 +271,7 @@ export default function MehfilRoom() {
           setMuted(true);
         }
       })();
-    }, 160);
+    }, 240);
 
     return () => {
       cancelled = true;
@@ -293,6 +294,28 @@ export default function MehfilRoom() {
       /* ignore */
     }
   }, [lkConnected, isHost, myEntry?.status]);
+
+  // ── Recover playback after tab resume / first Connected edge (mobile autoplay) ──
+  useEffect(() => {
+    const onVis = () => {
+      if (document.visibilityState !== "visible" || !joined) return;
+      const lk = livekitRef.current;
+      if (!lk) return;
+      lk.enableAudio();
+      void lk.room.startAudio().catch(() => {});
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, [joined]);
+
+  useEffect(() => {
+    if (!joined || !livekitRef.current || lkConnState === null) return;
+    if (lkConnState === ConnectionState.Connected && prevLkConnRef.current !== ConnectionState.Connected) {
+      livekitRef.current.enableAudio();
+      void livekitRef.current.room.startAudio().catch(() => {});
+    }
+    prevLkConnRef.current = lkConnState;
+  }, [joined, lkConnState]);
 
   // ── Listener: host ended Mehfil remotely ──
   useEffect(() => {
@@ -627,8 +650,13 @@ export default function MehfilRoom() {
   // ── Main room ──────────────────────────────────────────────────────────────
 
   return (
-    <div className="min-h-[100dvh] w-full flex flex-col overflow-hidden"
-      style={{ background: "#1A0F14", color: "#F5F3EF" }}>
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+      className="min-h-[100dvh] w-full flex flex-col overflow-hidden"
+      style={{ background: "#1A0F14", color: "#F5F3EF" }}
+    >
       <style>{`
         @keyframes mh-pulse { 0%,100%{transform:scale(0.95);opacity:.7} 70%{transform:scale(1.5);opacity:0} }
         @keyframes mh-spin  { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
@@ -810,12 +838,25 @@ export default function MehfilRoom() {
         )}
 
         {/* Active speaker (if different from host) */}
-        <AnimatePresence>
+        <AnimatePresence mode="wait">
           {activeSpeaker && activeSpeaker.userId !== mehfil.hostId && activeSpeakerPresence && (
-            <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 8 }}
-              className="mt-4 flex items-center gap-3 px-4 py-3 rounded-2xl"
-              style={{ background: "rgba(107,232,158,0.10)", border: "1px solid rgba(107,232,158,0.25)" }}>
-              <div className="relative w-9 h-9 rounded-full overflow-hidden shrink-0">
+            <motion.div
+              key={activeSpeaker.userId}
+              layout
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -6 }}
+              transition={{ type: "spring", stiffness: 320, damping: 28 }}
+              className="mt-4 flex items-center gap-3 px-4 py-3.5 rounded-2xl relative overflow-hidden"
+              style={{
+                background: "linear-gradient(135deg, rgba(107,232,158,0.16), rgba(232,177,74,0.06))",
+                border: "1px solid rgba(107,232,158,0.38)",
+                boxShadow: "0 14px 44px rgba(0,0,0,0.38), 0 0 48px rgba(107,232,158,0.08)",
+              }}
+            >
+              <div className="absolute inset-0 pointer-events-none rounded-2xl opacity-40"
+                style={{ background: "radial-gradient(ellipse 80% 120% at 20% 50%, rgba(107,232,158,0.25), transparent 55%)" }} />
+              <div className="relative w-11 h-11 rounded-full overflow-hidden shrink-0 ring-2 ring-[#6BE89E]/40">
                 {activeSpeakerPresence.avatar_url
                   ? <img src={activeSpeakerPresence.avatar_url} alt="" className="w-full h-full object-cover" />
                   : <div className="w-full h-full flex items-center justify-center text-[13px]"
@@ -825,13 +866,15 @@ export default function MehfilRoom() {
                 <div className="absolute inset-0 rounded-full border-2"
                   style={{ borderColor: "#6BE89E", animation: "speak-ring 1.8s ease-out infinite" }} />
               </div>
-              <div>
-                <div className="text-[12px] font-['Inter'] font-medium" style={{ color: "#6BE89E" }}>
-                  Speaking
+              <div className="relative flex-1 min-w-0">
+                <div className="text-[10px] font-['Inter'] font-semibold tracking-[0.2em] uppercase" style={{ color: "#B8FFD9" }}>
+                  On stage
                 </div>
-                <div className="text-[13px] font-['Playfair_Display']">{activeSpeakerPresence.display_name}</div>
+                <div className="text-[15px] font-['Playfair_Display'] leading-tight truncate">{activeSpeakerPresence.display_name}</div>
               </div>
-              <AudioBars active={true} />
+              <div className="relative shrink-0">
+                <AudioBars active={true} />
+              </div>
             </motion.div>
           )}
         </AnimatePresence>
@@ -1146,6 +1189,6 @@ export default function MehfilRoom() {
           />
         )}
       </AnimatePresence>
-    </div>
+    </motion.div>
   );
 }

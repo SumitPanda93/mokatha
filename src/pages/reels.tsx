@@ -20,25 +20,37 @@ function ReelSlide({
 }) {
   const { data: author } = useUser(post.authorId);
   const like = useLike(post.id);
+  const [coverReady, setCoverReady] = useState(!post.coverUrl);
+
+  useEffect(() => {
+    setCoverReady(!post.coverUrl);
+  }, [post.coverUrl, post.id]);
+
   const ambientBg =
     post.coverUrl
       ? undefined
       : "linear-gradient(165deg, #0E0717 0%, #1A0F2E 42%, #0A1020 72%, #120A1C 100%)";
 
   return (
-    <div
+    <motion.div
       data-reel-slide
       data-reel-index={index}
       className="relative min-h-[100dvh] w-full snap-start snap-always flex flex-col justify-end overflow-hidden shrink-0"
       style={{ scrollSnapStop: "always" }}
+      initial={false}
+      animate={{
+        opacity: active ? 1 : 0.76,
+      }}
+      transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
     >
       {post.coverUrl ? (
         <img
           src={post.coverUrl}
           alt=""
-          className="absolute inset-0 w-full h-full object-cover scale-[1.03]"
+          className={`absolute inset-0 w-full h-full object-cover scale-[1.03] transition-opacity duration-[680ms] ease-out ${coverReady ? "opacity-100" : "opacity-0"}`}
           decoding="async"
-          loading="lazy"
+          loading={index < 2 ? "eager" : "lazy"}
+          onLoad={() => setCoverReady(true)}
         />
       ) : (
         <div className="absolute inset-0" style={{ background: ambientBg }} />
@@ -61,73 +73,86 @@ function ReelSlide({
       <motion.div
         className="absolute -bottom-24 left-1/2 -translate-x-1/2 w-[120%] h-[45%] rounded-[50%] opacity-40 blur-3xl pointer-events-none"
         style={{ background: "radial-gradient(circle, rgba(201,168,76,0.35), transparent 70%)" }}
-        animate={{ opacity: active ? 0.5 : 0.28 }}
-        transition={{ duration: 1.2 }}
+        animate={{ opacity: active ? 0.52 : 0.26 }}
+        transition={{ duration: 1.35, ease: "easeOut" }}
       />
 
       <div className="relative z-10 px-6 pb-28 pt-24 flex flex-col justify-end min-h-[100dvh]">
-        <div className="flex items-center gap-2 mb-3">
-          <span className="text-[9px] font-['Inter'] tracking-[0.32em] uppercase px-2.5 py-1 rounded-full backdrop-blur-md font-semibold"
-            style={{ background: "rgba(155,89,182,0.55)", color: "rgba(255,255,255,0.95)", border: "1px solid rgba(255,255,255,0.12)" }}>
-            Reel
-          </span>
-          {active && (
-            <span className="text-[9px] font-['Inter'] tracking-[0.22em] uppercase text-white/55">
-              Now playing
+        <motion.div
+          className="flex flex-col gap-1 flex-1 justify-end"
+          initial={false}
+          animate={{ y: active ? 0 : 6, opacity: active ? 1 : 0.88 }}
+          transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
+        >
+          <div className="flex items-center gap-2 mb-2">
+            <span className="text-[9px] font-['Inter'] tracking-[0.32em] uppercase px-2.5 py-1 rounded-full backdrop-blur-md font-semibold"
+              style={{ background: "rgba(155,89,182,0.55)", color: "rgba(255,255,255,0.95)", border: "1px solid rgba(255,255,255,0.12)" }}>
+              Reel
             </span>
-          )}
-        </div>
-
-        <div className="flex items-center gap-2.5 mb-4">
-          {author?.avatarUrl ? (
-            <img
-              src={author.avatarUrl}
-              alt=""
-              className="w-9 h-9 rounded-full object-cover"
-              style={{ border: "1.5px solid rgba(255,255,255,0.22)" }}
-              decoding="async"
-            />
-          ) : (
-            <div className="w-9 h-9 rounded-full bg-white/10 border border-white/15" />
-          )}
-          <div>
-            <div className="text-[13px] font-['Inter'] text-white/90">{author?.displayName ?? "Creator"}</div>
-            {author?.handle ? (
-              <Link href={`/u/${author.handle}`} className="text-[11px] text-white/45 font-['Inter'] pointer-events-auto">
-                Profile
-              </Link>
-            ) : (
-              <span className="text-[11px] text-white/35 font-['Inter']">Creator</span>
+            {active && (
+              <span className="text-[9px] font-['Inter'] tracking-[0.22em] uppercase text-white/50">
+                Listening
+              </span>
             )}
           </div>
-        </div>
 
-        <h2 className="font-['Playfair_Display'] text-[26px] leading-[1.22] text-white italic mb-6 max-w-[95%]"
-          style={{ textShadow: "0 3px 28px rgba(0,0,0,0.55)" }}>
-          {post.title}
-        </h2>
+          <div className="flex items-center gap-3 mb-5">
+            <div className="relative shrink-0">
+              {author?.avatarUrl ? (
+                <motion.img
+                  src={author.avatarUrl}
+                  alt=""
+                  className="w-11 h-11 rounded-full object-cover shadow-lg shadow-black/35"
+                  style={{ border: "2px solid rgba(255,255,255,0.22)" }}
+                  decoding="async"
+                  animate={{ scale: active ? 1 : 0.96 }}
+                  transition={{ type: "spring", stiffness: 280, damping: 22 }}
+                />
+              ) : (
+                <div className="w-11 h-11 rounded-full bg-white/10 border border-white/15" />
+              )}
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="text-[15px] font-['Inter'] font-semibold text-white tracking-tight truncate">
+                {author?.displayName ?? "Creator"}
+              </div>
+              {author?.handle ? (
+                <Link href={`/u/${author.handle}`} className="text-[11px] text-white/38 font-['Inter'] tracking-[0.04em] pointer-events-auto">
+                  @{author.handle}
+                </Link>
+              ) : (
+                <span className="text-[11px] text-white/30 font-['Inter']">Creator</span>
+              )}
+            </div>
+          </div>
 
-        <div className="flex items-center gap-3 pointer-events-auto">
-          <motion.button
-            whileTap={{ scale: 0.9 }}
-            onClick={() => like.mutate()}
-            className={`flex items-center gap-2 px-4 py-2.5 rounded-full text-[12px] font-['Inter'] backdrop-blur-md border ${post.liked ? "bg-white/18 border-white/25 text-white" : "bg-black/25 border-white/15 text-white/85"}`}
-          >
-            <Heart size={15} fill={post.liked ? "currentColor" : "none"} />
-            {post.likes}
-          </motion.button>
-          <Link href={`/post/${post.id}`}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-full text-[12px] font-['Inter'] bg-black/22 backdrop-blur-md border border-white/12 text-white/85">
-            <MessageCircle size={15} />
-            {post.comments}
-          </Link>
-          <Link href={`/post/${post.id}`}
-            className="ml-auto text-[11px] font-['Inter'] tracking-[0.14em] uppercase text-white/50 px-3 py-2 rounded-full border border-white/10">
-            Open
-          </Link>
-        </div>
+          <h2 className="font-['Playfair_Display'] text-[27px] leading-[1.18] text-white italic mb-7 max-w-[96%]"
+            style={{ textShadow: "0 4px 32px rgba(0,0,0,0.55)" }}>
+            {post.title}
+          </h2>
+
+          <div className="flex items-center gap-3 pointer-events-auto pb-0.5">
+            <motion.button
+              whileTap={{ scale: 0.9 }}
+              onClick={() => like.mutate()}
+              className={`flex items-center gap-2 px-4 py-2.5 rounded-full text-[12px] font-['Inter'] backdrop-blur-md border transition-colors duration-300 ${post.liked ? "bg-white/18 border-white/25 text-white" : "bg-black/28 border-white/14 text-white/88"}`}
+            >
+              <Heart size={15} fill={post.liked ? "currentColor" : "none"} />
+              {post.likes}
+            </motion.button>
+            <Link href={`/post/${post.id}`}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-full text-[12px] font-['Inter'] bg-black/22 backdrop-blur-md border border-white/12 text-white/85">
+              <MessageCircle size={15} />
+              {post.comments}
+            </Link>
+            <Link href={`/post/${post.id}`}
+              className="ml-auto text-[11px] font-['Inter'] tracking-[0.14em] uppercase text-white/48 px-3 py-2 rounded-full border border-white/12 hover:bg-white/6 transition-colors duration-300">
+              Open
+            </Link>
+          </div>
+        </motion.div>
       </div>
-    </div>
+    </motion.div>
   );
 }
 
@@ -139,6 +164,7 @@ export default function ReelsBrowse() {
   const containerRef = useRef<HTMLDivElement>(null);
   const [active, setActive] = useState(0);
   const { play, pause, playing, track } = useAudioPlayer();
+  const preloadAudioRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
     return () => {
@@ -189,6 +215,20 @@ export default function ReelsBrowse() {
     if (reels.length > 0 && active !== activeSafe) setActive(activeSafe);
   }, [reels.length, active, activeSafe]);
 
+  const nextAudioUrl = reels[activeSafe + 1]?.audioUrl;
+
+  useEffect(() => {
+    if (!nextAudioUrl) return;
+    const a = new Audio();
+    a.preload = "auto";
+    a.src = nextAudioUrl;
+    preloadAudioRef.current = a;
+    return () => {
+      a.src = "";
+      if (preloadAudioRef.current === a) preloadAudioRef.current = null;
+    };
+  }, [nextAudioUrl]);
+
   const activePost = reels[activeSafe];
 
   useEffect(() => {
@@ -214,7 +254,7 @@ export default function ReelsBrowse() {
         <button
           type="button"
           onClick={() => setLocation("/")}
-          className="pointer-events-auto w-10 h-10 rounded-full flex items-center justify-center backdrop-blur-md border border-white/12 bg-black/25 active:scale-[0.96] transition-transform"
+          className="pointer-events-auto w-10 h-10 rounded-full flex items-center justify-center backdrop-blur-md border border-white/12 bg-black/25 active:scale-[0.96] transition-transform duration-200"
           aria-label="Back"
         >
           <ArrowLeft size={18} className="text-white/90" />
@@ -232,7 +272,7 @@ export default function ReelsBrowse() {
             durationSec: activePost.durationSec,
             tags: activePost.tags,
           }))}
-          className="pointer-events-auto w-10 h-10 rounded-full flex items-center justify-center backdrop-blur-md border border-white/12 bg-black/25"
+          className="pointer-events-auto w-10 h-10 rounded-full flex items-center justify-center backdrop-blur-md border border-white/12 bg-black/25 transition-colors duration-300"
           aria-label={isCurrentPlaying ? "Pause" : "Play"}
         >
           {isCurrentPlaying ? <Pause size={17} className="text-white" /> : <Play size={17} className="text-white ml-0.5" fill="white" />}
@@ -241,7 +281,11 @@ export default function ReelsBrowse() {
 
       {isLoading && (
         <div className="flex flex-col items-center justify-center min-h-[100dvh] gap-4 px-8 text-center">
-          <div className="w-9 h-9 rounded-full border-2 border-[rgba(201,168,76,0.5)] border-t-transparent animate-spin" />
+          <motion.div
+            className="w-9 h-9 rounded-full border-2 border-[rgba(201,168,76,0.5)] border-t-transparent"
+            animate={{ rotate: 360 }}
+            transition={{ duration: 0.9, repeat: Infinity, ease: "linear" }}
+          />
           <p className="text-[13px] font-['Playfair_Display'] italic text-white/45 leading-relaxed">
             Gathering reels…
           </p>
@@ -257,7 +301,7 @@ export default function ReelsBrowse() {
           <p className="text-[13px] font-['Inter'] text-white/45 leading-relaxed max-w-xs">
             When short voices arrive, they will drift through here — calm, vertical, one breath at a time.
           </p>
-          <button type="button" onClick={() => setLocation("/")} className="mt-8 text-[12px] font-['Inter'] tracking-[0.12em] uppercase text-[#C9A84C]/90 border border-[#C9A84C]/35 rounded-full px-6 py-2.5">
+          <button type="button" onClick={() => setLocation("/")} className="mt-8 text-[12px] font-['Inter'] tracking-[0.12em] uppercase text-[#C9A84C]/90 border border-[#C9A84C]/35 rounded-full px-6 py-2.5 transition-colors hover:bg-[#C9A84C]/10">
             Return home
           </button>
         </div>

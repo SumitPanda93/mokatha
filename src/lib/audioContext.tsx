@@ -97,7 +97,7 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
     if (t.durationSec) setDur(t.durationSec);
     const start = performance.now();
     const fadeIn = (now: number) => {
-      const p = Math.min(1, (now - start) / 320);
+      const p = Math.min(1, (now - start) / 400);
       el.volume = p;
       if (p < 1) fadeRafRef.current = requestAnimationFrame(fadeIn);
       else fadeRafRef.current = null;
@@ -111,7 +111,7 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
     cancelFade();
     const start = performance.now();
     const fadeOut = (now: number) => {
-      const p = Math.max(0, 1 - (now - start) / 240);
+      const p = Math.max(0, 1 - (now - start) / 290);
       el.volume = p;
       if (p > 0.04) fadeRafRef.current = requestAnimationFrame(fadeOut);
       else {
@@ -135,7 +135,7 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
       setPlaying(true);
       const start = performance.now();
       const fadeIn = (now: number) => {
-        const p = Math.min(1, (now - start) / 300);
+        const p = Math.min(1, (now - start) / 360);
         el.volume = p;
         if (p < 1) fadeRafRef.current = requestAnimationFrame(fadeIn);
         else fadeRafRef.current = null;

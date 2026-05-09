@@ -24,6 +24,12 @@ const KIND_LABEL: Record<string, string> = {
 const FILTERS = ["For you", "Voice", "Text", "Story", "Reel"] as const;
 type Filter = typeof FILTERS[number];
 
+/** Unified feed card shell — consistent rhythm across post kinds */
+const FEED_CARD =
+  "rounded-2xl overflow-hidden bg-card border border-border/60 shadow-md shadow-black/[0.06] ring-1 ring-black/[0.035]";
+const FEED_FOOTER =
+  "px-4 py-3 flex items-center gap-2 border-t border-border/45 bg-card/98 backdrop-blur-[2px]";
+
 function greeting() {
   const h = new Date().getHours();
   if (h < 5) return "Late night"; if (h < 12) return "Good morning";
@@ -65,7 +71,7 @@ function VoiceCard({ post, onTip }: { post: Post; onTip: () => void }) {
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ type: "spring", damping: 24, stiffness: 200 }}
-      className="rounded-2xl overflow-hidden shadow-lg shadow-black/[0.06] ring-1 ring-black/[0.05]"
+      className={`${FEED_CARD} transition-[box-shadow,border-color] duration-300 hover:shadow-lg hover:border-border/80`}
     >
       {/* Hero area */}
       <Link href={`/post/${post.id}`} className="relative block h-[192px] overflow-hidden">
@@ -123,7 +129,7 @@ function VoiceCard({ post, onTip }: { post: Post; onTip: () => void }) {
       </Link>
 
       {/* Action row */}
-      <div className="px-4 py-3 bg-card flex items-center gap-2">
+      <div className={FEED_FOOTER}>
         <motion.button whileTap={{ scale: 0.85 }} onClick={() => like.mutate()}
           className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[12px] font-['Inter'] transition-colors ${post.liked ? "bg-terracotta text-white" : "text-muted-foreground hover:text-terracotta"}`}>
           <Heart size={13} fill={post.liked ? "currentColor" : "none"} />{post.likes}
@@ -157,7 +163,7 @@ function TextCard({ post, onTip }: { post: Post; onTip: () => void }) {
       initial={{ opacity: 0, y: 6 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ type: "spring", damping: 24, stiffness: 200 }}
-      className="rounded-2xl overflow-hidden bg-card border border-border/65 shadow-md hover:shadow-lg hover:border-border transition-[box-shadow,border-color] duration-300 active:scale-[0.995]"
+      className={`${FEED_CARD} hover:shadow-lg hover:border-border/75 transition-[box-shadow,border-color] duration-300 active:scale-[0.997]`}
     >
       {/* Cover image (optional) */}
       {post.coverUrl && (
@@ -255,8 +261,8 @@ function ReelCard({ post, onTip }: { post: Post; onTip: () => void }) {
     <motion.div
       initial={{ opacity: 0, y: 6 }}
       animate={{ opacity: 1, y: 0 }}
-      className="rounded-3xl overflow-hidden shadow-xl relative ring-1 ring-black/[0.04]"
-      style={{ boxShadow: "0 12px 48px rgba(0,0,0,0.28)" }}
+      className={`${FEED_CARD} relative`}
+      style={{ boxShadow: "0 14px 42px rgba(0,0,0,0.22)" }}
     >
       {/* Full-height cinematic canvas */}
       <div className="relative overflow-hidden" style={{ aspectRatio: "4/5" }}>
@@ -341,8 +347,7 @@ function ReelCard({ post, onTip }: { post: Post; onTip: () => void }) {
       </div>
 
       {/* Action bar — floats below, part of card */}
-      <div className="px-4 py-3 flex items-center gap-1.5"
-        style={{ background: "hsl(var(--card))", borderTop: "1px solid hsl(var(--border)/0.5)" }}>
+      <div className={FEED_FOOTER}>
         <motion.button whileTap={{ scale: 0.82 }} onClick={() => like.mutate()}
           className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[12px] font-['Inter'] transition-colors ${post.liked ? "text-terracotta" : "text-muted-foreground hover:text-terracotta"}`}>
           <Heart size={13} fill={post.liked ? "currentColor" : "none"} />
@@ -385,8 +390,8 @@ function TipSheet({ postId, onClose }: { postId: string; onClose: () => void }) 
   return (
     <motion.div className="fixed inset-0 bg-black/50 z-50 flex items-end justify-center"
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose}>
-      <motion.div initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
-        transition={{ type: "spring", damping: 30, stiffness: 300 }}
+      <motion.div initial={{ opacity: 0, y: "100%" }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: "100%" }}
+        transition={{ type: "spring", damping: 34, stiffness: 280, mass: 0.92 }}
         onClick={(e) => e.stopPropagation()}
         className="w-full max-w-[430px] bg-background rounded-t-3xl px-6 pt-4 pb-10">
         <div className="w-10 h-1 rounded-full bg-border mx-auto mb-5" />

@@ -24,7 +24,7 @@ function ListeningMode({ onClose }: { onClose: () => void }) {
       initial={{ y: "100%" }}
       animate={{ y: 0 }}
       exit={{ y: "100%" }}
-      transition={{ type: "spring", damping: 30, stiffness: 280 }}
+      transition={{ type: "spring", damping: 34, stiffness: 272, mass: 0.95 }}
       className="fixed inset-0 z-[60] flex flex-col overflow-hidden"
     >
       {hasGlow ? (
