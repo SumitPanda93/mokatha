@@ -33,6 +33,8 @@ export type Post = {
   authorId: string;
   title: string;
   body: string;
+  /** Vertical reel video (primary immersive media when present) */
+  videoUrl?: string;
   audioUrl?: string;
   coverUrl?: string;
   durationSec?: number;
@@ -222,6 +224,7 @@ function mapPost(p: any): Post {
     authorId: p.author_id,
     title: p.title,
     body: p.body ?? "",
+    videoUrl: p.video_url ?? undefined,
     audioUrl: p.audio_url,
     coverUrl: p.cover_url,
     durationSec: p.duration_sec,
@@ -966,6 +969,7 @@ export async function addPost(post: Omit<Post, "id" | "createdAt" | "likes" | "c
     tags: post.tags ?? [],
     access_type: post.accessType ?? "free",
   };
+  if (post.videoUrl != null) row.video_url = post.videoUrl;
   if (post.audioUrl != null) row.audio_url = post.audioUrl;
   if (post.coverUrl != null) row.cover_url = post.coverUrl;
   if (post.durationSec != null) row.duration_sec = post.durationSec;
@@ -1170,10 +1174,16 @@ export async function uploadMediaFile(userId: string, file: File, bucket: "audio
   const filename = `${Date.now()}_${Math.random().toString(36).slice(2, 7)}.${ext}`;
   const folder = bucket === "audio" ? "tracks" : "reels";
   const path = `${folder}/${userId}/${filename}`;
-  const { error } = await supabase.storage.from(bucket).upload(path, file, { upsert: false, contentType: file.type });
+  const storageBucket = bucket === "video" ? "audio" : bucket;
+  const { error } = await supabase.storage.from(storageBucket).upload(path, file, { upsert: false, contentType: file.type });
   if (error) throw new Error(error.message);
-  const { data } = supabase.storage.from(bucket).getPublicUrl(path);
+  const { data } = supabase.storage.from(storageBucket).getPublicUrl(path);
   return data.publicUrl;
+}
+
+/** Reel vertical video — stored in public `audio` bucket (allows video/* MIME per bucket policy). */
+export async function uploadReelVideoFile(userId: string, file: File): Promise<string> {
+  return uploadMediaFile(userId, file, "video");
 }
 
 export async function registerUser(displayName: string, _phone: string): Promise<User> {
@@ -1573,6 +1583,7 @@ export const useTransactions = (id?: string) => {
     queryFn: () => getTransactionsForUser(userId),
     enabled: !!userId,
     staleTime: 0,
+    refetchOnWindowFocus: true,
   });
 };
 export const useNotifications = () => useQ(QK.notifications, getNotifications);

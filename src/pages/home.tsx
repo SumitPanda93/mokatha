@@ -274,7 +274,18 @@ function ReelCard({ post, onTip }: { post: Post; onTip: () => void }) {
         >
           <Layers size={15} className="text-white/90" />
         </Link>
-        {post.coverUrl ? (
+        {post.videoUrl ? (
+          <video
+            src={post.videoUrl}
+            poster={post.coverUrl || undefined}
+            className="absolute inset-0 w-full h-full object-cover scale-[1.02] bg-muted"
+            muted
+            playsInline
+            loop
+            autoPlay
+            preload="metadata"
+          />
+        ) : post.coverUrl ? (
           <img src={post.coverUrl} alt="" className="absolute inset-0 w-full h-full object-cover scale-[1.02] transition-transform duration-700 bg-muted" decoding="async" loading="lazy" />
         ) : (
           <div className="absolute inset-0" style={{ background: ambientBg }} />
@@ -294,7 +305,7 @@ function ReelCard({ post, onTip }: { post: Post; onTip: () => void }) {
           <div className="flex items-center gap-2">
             <span className="text-[8px] font-['Inter'] tracking-[0.28em] uppercase px-2.5 py-1 rounded-full font-semibold backdrop-blur-md"
               style={{ background: "rgba(155,89,182,0.75)", color: "#fff" }}>
-              Reel
+              Reel{post.videoUrl ? " · film" : ""}
             </span>
             <AccessBadge post={post} />
           </div>

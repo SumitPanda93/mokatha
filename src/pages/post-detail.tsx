@@ -261,9 +261,9 @@ export default function PostDetail() {
     if (post && me && !isAuthor) earnPts.mutate({ userId: me, points: 5 });
   }, [post?.id]);
 
-  // Reels: auto-start playback on entry (mirrors the immersive card experience)
+  // Reels: auto-start legacy audio when no video file
   useEffect(() => {
-    if (post?.kind === "reel" && post.audioUrl && !locked) {
+    if (post?.kind === "reel" && post.audioUrl && !post.videoUrl && !locked) {
       toggleAudio();
     }
   }, [post?.id]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -305,7 +305,6 @@ export default function PostDetail() {
 
       {/* ── Cover / hero ── */}
       {post.kind === "reel" ? (
-        /* ── Reel: cinematic full-height canvas ── */
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
@@ -313,16 +312,27 @@ export default function PostDetail() {
           className="relative overflow-hidden mx-0"
           style={{ aspectRatio: "4/5" }}
         >
-          {post.coverUrl
-            ? <img src={post.coverUrl} alt="" className={`absolute inset-0 w-full h-full object-cover ${locked ? "blur-sm" : ""}`} />
-            : <div className="absolute inset-0" style={{ background: kindGradient(post.kind) }} />
-          }
+          {post.videoUrl ? (
+            <video
+              src={post.videoUrl}
+              poster={post.coverUrl || undefined}
+              className={`absolute inset-0 w-full h-full object-cover ${locked ? "blur-md" : ""}`}
+              playsInline
+              controls
+              muted={false}
+              loop
+            />
+          ) : post.coverUrl ? (
+            <img src={post.coverUrl} alt="" className={`absolute inset-0 w-full h-full object-cover ${locked ? "blur-sm" : ""}`} />
+          ) : (
+            <div className="absolute inset-0" style={{ background: kindGradient(post.kind) }} />
+          )}
           {/* Multi-layer cinematic gradient */}
-          <div className="absolute inset-0" style={{
+          <div className="absolute inset-0 pointer-events-none" style={{
             background: "linear-gradient(to bottom, rgba(0,0,0,0.08) 0%, rgba(0,0,0,0.02) 25%, rgba(0,0,0,0.55) 65%, rgba(0,0,0,0.92) 100%)"
           }} />
-          {/* Play button — premium minimal */}
-          {isAudio && !locked && (
+          {/* Play button — legacy audio reels */}
+          {isAudio && !locked && !post.videoUrl && (
             <button onClick={toggleAudio}
               className="absolute inset-0 flex items-center justify-center"
               aria-label={playing ? "Pause" : "Play"}>
