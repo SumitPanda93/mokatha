@@ -5,11 +5,32 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { motion } from "framer-motion";
 import {
-  ArrowLeft, Heart, MessageCircle, Pause, Play, Volume2, VolumeX, Share2,
+  ArrowLeft, Heart, MessageCircle, Pause, Play, Volume2, VolumeX, Share2, Lock,
 } from "lucide-react";
 import { useTitle } from "@/hooks/useTitle";
-import { useFeed, Post, useLike, useUser } from "@/lib/store";
+import {
+  useFeed, Post, useLike, useUser,
+  getCurrentUserId,
+  useIsPostUnlocked,
+  useIsSubscribedTo,
+  useUnlockPostWithTip,
+  useUnlockPostWithPoints,
+  useSubscribeToAuthor,
+  useAuthorPlan,
+  useInkReward,
+} from "@/lib/store";
 import { EASE_CINEMA } from "@/lib/motionTokens";
+
+function parseReelTrim(tags: string[] | undefined): { start: number; end: number } | null {
+  const raw = tags?.find((t) => t.startsWith("trim:"));
+  if (!raw) return null;
+  const body = raw.slice("trim:".length);
+  const [a, b] = body.split(":");
+  const start = Number(a);
+  const end = Number(b);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end - start < 0.15) return null;
+  return { start: Math.max(0, start), end };
+}
 
 function ReelItem({
   post,
@@ -24,39 +45,92 @@ function ReelItem({
   muted: boolean;
   onToggleMute: () => void;
 }) {
+  const me = getCurrentUserId() ?? "";
   const { data: author } = useUser(post.authorId);
   const like = useLike(post.id);
+  const { data: tipOk = false } = useIsPostUnlocked(me, post.id);
+  const { data: subbed = false } = useIsSubscribedTo(me, post.authorId);
+  const unlockTip = useUnlockPostWithTip();
+  const unlockPts = useUnlockPostWithPoints();
+  const subscribeMut = useSubscribeToAuthor();
+  const { data: plan } = useAuthorPlan(post.authorId);
+  const { data: ink } = useInkReward(me);
+
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
 
   const primaryVideo = Boolean(post.videoUrl);
   const legacyAudio = !primaryVideo && Boolean(post.audioUrl);
+  const trim = useMemo(() => parseReelTrim(post.tags), [post.tags]);
+
+  const isAuthor = post.authorId === me;
+  const tipLocked = !isAuthor && post.accessType === "tip" && !tipOk;
+  const premiumLocked = !isAuthor && post.accessType === "premium" && !subbed;
+  const locked = tipLocked || premiumLocked;
+
+  const hasPts = (ink?.points ?? 0) >= 50;
+
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v || !trim || !primaryVideo) return;
+    const onTime = () => {
+      if (v.currentTime >= trim.end - 0.06) v.currentTime = trim.start;
+    };
+    const onMeta = () => {
+      if (v.currentTime < trim.start) v.currentTime = trim.start;
+    };
+    v.addEventListener("timeupdate", onTime);
+    v.addEventListener("loadedmetadata", onMeta);
+    return () => {
+      v.removeEventListener("timeupdate", onTime);
+      v.removeEventListener("loadedmetadata", onMeta);
+    };
+  }, [trim, primaryVideo, post.id]);
 
   useEffect(() => {
     const v = videoRef.current;
     const a = audioRef.current;
+    if (locked) {
+      if (v) {
+        v.pause();
+        try {
+          v.currentTime = trim?.start ?? 0;
+        } catch {
+          /* ignore */
+        }
+      }
+      if (a) {
+        a.pause();
+        a.currentTime = 0;
+      }
+      return;
+    }
     if (primaryVideo && v) {
       v.muted = muted;
+      if (trim && active) {
+        if (v.currentTime < trim.start || v.currentTime >= trim.end) v.currentTime = trim.start;
+      }
       if (active) void v.play().catch(() => {});
       else {
         v.pause();
-        v.currentTime = 0;
+        v.currentTime = trim?.start ?? 0;
       }
     }
     if (legacyAudio && a) {
-      if (active) {
-        void a.play().catch(() => {});
-      } else {
+      if (active) void a.play().catch(() => {});
+      else {
         a.pause();
         a.currentTime = 0;
       }
     }
-  }, [active, primaryVideo, legacyAudio, muted, post.id]);
+  }, [active, primaryVideo, legacyAudio, muted, post.id, locked, trim]);
 
   const ambient =
     !post.coverUrl && !primaryVideo
       ? "linear-gradient(165deg, #0e0717 0%, #1a0f2e 42%, #0a1020 72%, #120a1c 100%)"
       : undefined;
+
+  const tipAmounts = Array.from(new Set([post.minTip ?? 10, (post.minTip ?? 10) * 2, (post.minTip ?? 10) * 5, 100])).slice(0, 4);
 
   return (
     <motion.div
@@ -94,30 +168,90 @@ function ReelItem({
       )}
 
       <div
-        className="absolute inset-0 pointer-events-none"
+        className="absolute inset-0 pointer-events-none z-[5]"
         style={{
           background:
-            "linear-gradient(to bottom, rgba(0,0,0,0.2) 0%, transparent 35%, rgba(0,0,0,0.5) 62%, rgba(0,0,0,0.88) 100%)",
+            "linear-gradient(to bottom, rgba(0,0,0,0.38) 0%, transparent 40%, rgba(0,0,0,0.48) 62%, rgba(0,0,0,0.9) 100%)",
         }}
       />
 
-      <div className="absolute top-[max(env(safe-area-inset-top),12px)] right-4 z-20 flex flex-col gap-2 pointer-events-auto">
+      <div className="absolute top-[max(env(safe-area-inset-top),12px)] right-4 z-40 flex flex-col gap-2 pointer-events-auto">
         <motion.button
           type="button"
           whileTap={{ scale: 0.92 }}
           onClick={onToggleMute}
-          className="w-11 h-11 rounded-full backdrop-blur-md bg-black/35 border border-white/15 flex items-center justify-center"
+          disabled={locked && primaryVideo}
+          className="w-11 h-11 rounded-full backdrop-blur-md bg-black/35 border border-white/15 flex items-center justify-center disabled:opacity-35"
           aria-label={muted ? "Unmute" : "Mute"}
         >
           {muted ? <VolumeX size={18} className="text-white" /> : <Volume2 size={18} className="text-white" />}
         </motion.button>
       </div>
 
+      {locked && (
+        <div className="absolute inset-0 z-[28] flex flex-col items-center justify-center px-7 pointer-events-none">
+          <div className="pointer-events-auto relative w-full max-w-[308px] rounded-[22px] border border-white/[0.11] bg-black/50 px-6 py-8 text-center backdrop-blur-2xl shadow-[0_24px_80px_rgba(0,0,0,0.65)]">
+            <Lock className="mx-auto mb-4 text-white/50" size={26} strokeWidth={1.25} />
+            <p className="font-['Playfair_Display'] text-[21px] text-white/95 mb-2 leading-snug line-clamp-3">{post.title}</p>
+            {tipLocked ? (
+              <>
+                <p className="text-[12px] font-['Inter'] text-white/42 mb-5 leading-relaxed">
+                  Tip to unlock · from ₹{post.minTip ?? 10}
+                </p>
+                <div className="grid grid-cols-2 gap-2 mb-3">
+                  {tipAmounts.map((v: number) => (
+                    <button
+                      key={v}
+                      type="button"
+                      onClick={() => unlockTip.mutate({ postId: post.id, amount: v })}
+                      disabled={unlockTip.isPending}
+                      className="py-2.5 rounded-xl border border-white/18 text-white/90 text-[13px] font-['Inter'] hover:bg-white/[0.06] transition-colors disabled:opacity-45"
+                    >
+                      ₹{v}
+                    </button>
+                  ))}
+                </div>
+                <div className="flex items-center gap-2 text-[10px] text-white/35 mb-3 font-['Inter']">
+                  <div className="flex-1 h-px bg-white/12" />or<div className="flex-1 h-px bg-white/12" />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => unlockPts.mutate(post.id)}
+                  disabled={!hasPts || unlockPts.isPending}
+                  className={`w-full py-2.5 rounded-xl text-[13px] font-['Inter'] border transition-colors ${hasPts ? "border-violet-400/45 text-violet-100 hover:bg-violet-500/10" : "border-white/10 text-white/35 opacity-50 cursor-not-allowed"}`}
+                >
+                  50 Ink Points {!hasPts && `· you have ${ink?.points ?? 0}`}
+                </button>
+              </>
+            ) : (
+              <>
+                <p className="text-[12px] font-['Inter'] text-white/42 mb-6 leading-relaxed">
+                  This reel is for subscribers of {author?.displayName ?? "this creator"}.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => subscribeMut.mutate(post.authorId)}
+                  disabled={!plan?.enabled || subscribeMut.isPending}
+                  className="w-full py-3 rounded-xl bg-white text-black text-[13px] font-['Inter'] font-medium disabled:opacity-40"
+                >
+                  {plan?.enabled ? `Subscribe · ₹${plan.priceMonthly}/mo` : "Plan not available"}
+                </button>
+                {author?.handle ? (
+                  <Link href={`/u/${author.handle}`} className="mt-4 inline-block text-[12px] text-white/45 font-['Inter']">
+                    View profile
+                  </Link>
+                ) : null}
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
       <div className="absolute bottom-0 left-0 right-0 z-10 px-5 pb-[max(env(safe-area-inset-bottom),28px)] pt-16 flex flex-col justify-end pointer-events-none">
-        <div className="pointer-events-auto space-y-4">
+        <div className={`pointer-events-auto space-y-4 ${locked ? "opacity-35" : ""}`}>
           <div className="flex items-center gap-3">
             {author?.avatarUrl ? (
-              <img src={author.avatarUrl} alt="" className="w-11 h-11 rounded-full object-cover ring-2 ring-white/20" />
+              <img src={author.avatarUrl} alt="" className="w-11 h-11 rounded-full object-cover ring-1 ring-white/18" />
             ) : (
               <div className="w-11 h-11 rounded-full bg-white/10" />
             )}
@@ -137,11 +271,11 @@ function ReelItem({
 
           <div className="flex items-center gap-2 flex-wrap">
             <motion.button type="button" whileTap={{ scale: 0.9 }} onClick={() => like.mutate()}
-              className="flex items-center gap-2 px-4 py-2 rounded-full backdrop-blur-md border border-white/15 bg-black/30 text-white text-[12px] font-['Inter']">
+              className="flex items-center gap-2 px-4 py-2 rounded-full backdrop-blur-md border border-white/14 bg-black/28 text-white text-[12px] font-['Inter']">
               <Heart size={16} fill={post.liked ? "currentColor" : "none"} /> {post.likes}
             </motion.button>
             <Link href={`/post/${post.id}`}
-              className="flex items-center gap-2 px-4 py-2 rounded-full backdrop-blur-md border border-white/15 bg-black/28 text-white/90 text-[12px] font-['Inter']">
+              className="flex items-center gap-2 px-4 py-2 rounded-full backdrop-blur-md border border-white/14 bg-black/24 text-white/90 text-[12px] font-['Inter']">
               <MessageCircle size={16} /> {post.comments}
             </Link>
             <motion.button
@@ -153,7 +287,7 @@ function ReelItem({
                   void navigator.clipboard.writeText(url);
                 });
               }}
-              className="flex items-center gap-2 px-4 py-2 rounded-full backdrop-blur-md border border-white/15 bg-black/28 text-white/85 text-[12px] font-['Inter'] ml-auto"
+              className="flex items-center gap-2 px-4 py-2 rounded-full backdrop-blur-md border border-white/14 bg-black/22 text-white/85 text-[12px] font-['Inter'] ml-auto"
             >
               <Share2 size={15} /> Share
             </motion.button>

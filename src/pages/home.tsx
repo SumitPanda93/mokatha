@@ -6,7 +6,7 @@ import { useTitle } from "@/hooks/useTitle";
 import {
   useFeed, useCurrentUser, useMehfils, useLike, useTip, useUser, useSavePost,
   getCurrentUserId, Post, useIsPostUnlocked,
-  usePostsRealtime, useMehfilRealtime, useUnreadCount, useNotificationsRealtime,
+  usePostsRealtime, useMehfilRealtime, useUnreadCount, useNotificationsRealtime, useAccountSyncRealtime,
 } from "@/lib/store";
 import { SHEET_SPRING } from "@/lib/motionTokens";
 
@@ -433,6 +433,7 @@ export default function Home() {
   const { data: mehfils = [] } = useMehfils();
   const liveMehfil = mehfils.find((m) => m.isLive);
   usePostsRealtime();
+  useAccountSyncRealtime();
   useMehfilRealtime();
   useNotificationsRealtime();
   const { data: unreadCount = 0 } = useUnreadCount();

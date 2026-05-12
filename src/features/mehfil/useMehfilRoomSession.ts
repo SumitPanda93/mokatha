@@ -75,6 +75,8 @@ export function useMehfilRoomSession(
   lkCbRef.current.setLkConnState = setLkConnState;
   lkCbRef.current.setAudioBlocked = setAudioBlocked;
 
+  const sawLiveRef = useRef(false);
+
   const isHost = !!me && !!mehfil && me === mehfil.hostId;
   const myEntry = queue.find((q) => q.userId === me);
   const activeSpeaker = queue.find((q) => q.status === "speaking");
@@ -198,17 +200,25 @@ export function useMehfilRoomSession(
   }, [joined, me, myUser, isHost, myEntry?.status]);
 
   useEffect(() => {
-    if (!joined || !mehfil || mehfil.isLive || endedRef.current) return;
-    endedRef.current = true;
-    channelRef.current?.untrack();
-    if (channelRef.current) supabase.removeChannel(channelRef.current);
-    channelRef.current = null;
-    livekitRef.current?.disconnect();
-    livekitRef.current = null;
-    lkPublishModeRef.current = null;
-    setJoined(false);
-    setRoomEnded(true);
-    toast.message("This Mehfil has ended.", { duration: 3200 });
+    if (mehfil?.isLive) sawLiveRef.current = true;
+  }, [mehfil?.isLive]);
+
+  useEffect(() => {
+    if (!joined || !mehfil || endedRef.current) return;
+    // Only treat as "ended" after we've observed this session as live at least once,
+    // so early joins (scheduled / lobby) are not torn down when is_live is still false.
+    if (!mehfil.isLive && sawLiveRef.current) {
+      endedRef.current = true;
+      channelRef.current?.untrack();
+      if (channelRef.current) supabase.removeChannel(channelRef.current);
+      channelRef.current = null;
+      livekitRef.current?.disconnect();
+      livekitRef.current = null;
+      lkPublishModeRef.current = null;
+      setJoined(false);
+      setRoomEnded(true);
+      toast.message("This Mehfil has ended.", { duration: 3200 });
+    }
   }, [joined, mehfil?.isLive, mehfil]);
 
   const teardown = useCallback(() => {
@@ -294,6 +304,7 @@ export function useMehfilRoomSession(
   const leaveRoom = useCallback(() => {
     teardown();
     endedRef.current = false;
+    sawLiveRef.current = false;
     navigateToMehfilList();
   }, [teardown, navigateToMehfilList]);
 

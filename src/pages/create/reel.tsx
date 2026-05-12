@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { motion } from "framer-motion";
 import { ArrowLeft, Video, Loader2, X } from "lucide-react";
@@ -7,13 +7,56 @@ import { useAddPost, getCurrentUserId, uploadReelVideoFile } from "@/lib/store";
 import { supabase } from "@/lib/supabase";
 import { toast } from "sonner";
 
-async function uploadCoverImage(userId: string, file: File): Promise<string> {
-  const ext = file.name.split(".").pop()?.toLowerCase() ?? "jpg";
-  const path = `covers/${userId}/${Date.now()}.${ext}`;
-  const { error } = await supabase.storage.from("audio").upload(path, file, { upsert: true });
+async function uploadPosterBlob(userId: string, blob: Blob): Promise<string> {
+  const path = `covers/${userId}/${Date.now()}.jpg`;
+  const { error } = await supabase.storage.from("audio").upload(path, blob, { upsert: true, contentType: "image/jpeg" });
   if (error) throw error;
   const { data } = supabase.storage.from("audio").getPublicUrl(path);
   return data.publicUrl;
+}
+
+async function capturePosterFromVideoUrl(videoUrl: string, atSec: number): Promise<Blob | null> {
+  return new Promise((resolve) => {
+    const v = document.createElement("video");
+    v.crossOrigin = "anonymous";
+    v.muted = true;
+    v.playsInline = true;
+    v.src = videoUrl;
+    const done = (blob: Blob | null) => {
+      try {
+        v.removeAttribute("src");
+        v.load();
+      } catch {
+        /* ignore */
+      }
+      resolve(blob);
+    };
+    const fail = () => done(null);
+    v.onerror = fail;
+    v.onloadeddata = () => {
+      const dur = Number.isFinite(v.duration) && v.duration > 0 ? v.duration : 1;
+      const t = Math.min(Math.max(0, atSec), Math.max(0.05, dur - 0.04));
+      v.currentTime = t;
+    };
+    v.onseeked = () => {
+      try {
+        const w = v.videoWidth;
+        const h = v.videoHeight;
+        if (!w || !h) return done(null);
+        const canvas = document.createElement("canvas");
+        const tw = 720;
+        const th = Math.round((h / w) * tw);
+        canvas.width = tw;
+        canvas.height = th;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return done(null);
+        ctx.drawImage(v, 0, 0, tw, th);
+        canvas.toBlob((b) => done(b), "image/jpeg", 0.82);
+      } catch {
+        done(null);
+      }
+    };
+  });
 }
 
 export default function CreateReel() {
@@ -23,19 +66,35 @@ export default function CreateReel() {
   const [language, setLanguage] = useState<"or" | "hi">("or");
   const videoInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
-  const coverInputRef = useRef<HTMLInputElement>(null);
+  const previewVideoRef = useRef<HTMLVideoElement>(null);
 
   const [videoPreview, setVideoPreview] = useState<string | null>(null);
   const [videoUploading, setVideoUploading] = useState(false);
   const [videoUrl, setVideoUrl] = useState<string | undefined>();
 
-  const [coverUploading, setCoverUploading] = useState(false);
-  const [coverUrl, setCoverUrl] = useState<string | null>(null);
+  const [mediaDuration, setMediaDuration] = useState(0);
+  const [trimStart, setTrimStart] = useState(0);
+  const [trimEnd, setTrimEnd] = useState(0);
+
+  const [tipLock, setTipLock] = useState(false);
+  const [minTip, setMinTip] = useState(10);
 
   const add = useAddPost();
 
   const pickGallery = () => videoInputRef.current?.click();
   const pickCamera = () => cameraInputRef.current?.click();
+
+  useEffect(() => {
+    const pv = previewVideoRef.current;
+    if (!pv || !videoPreview || mediaDuration <= 0) return;
+    const start = Math.min(trimStart, trimEnd - 0.25);
+    const end = Math.max(trimEnd, start + 0.25);
+    const onTime = () => {
+      if (pv.currentTime >= end - 0.06) pv.currentTime = start;
+    };
+    pv.addEventListener("timeupdate", onTime);
+    return () => pv.removeEventListener("timeupdate", onTime);
+  }, [videoPreview, mediaDuration, trimStart, trimEnd]);
 
   const onVideoSelected = async (file: File | undefined) => {
     if (!file || !file.type.startsWith("video/")) {
@@ -51,6 +110,9 @@ export default function CreateReel() {
     setVideoPreview(local);
     setVideoUploading(true);
     setVideoUrl(undefined);
+    setMediaDuration(0);
+    setTrimStart(0);
+    setTrimEnd(0);
     try {
       const url = await uploadReelVideoFile(me, file);
       setVideoUrl(url);
@@ -63,24 +125,7 @@ export default function CreateReel() {
     }
   };
 
-  const onCoverSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const me = getCurrentUserId();
-    if (!me) return toast.error("Sign in first");
-    setCoverUploading(true);
-    try {
-      const url = await uploadCoverImage(me, file);
-      setCoverUrl(url);
-    } catch {
-      toast.error("Cover upload failed");
-    } finally {
-      setCoverUploading(false);
-      e.target.value = "";
-    }
-  };
-
-  const publish = () => {
+  const publish = async () => {
     if (!caption.trim()) return;
     const me = getCurrentUserId();
     if (!me) {
@@ -91,6 +136,17 @@ export default function CreateReel() {
       toast.error("Add a video first");
       return;
     }
+    let coverUrl = "";
+    try {
+      const blob = await capturePosterFromVideoUrl(videoUrl, trimStart);
+      if (blob) coverUrl = await uploadPosterBlob(me, blob);
+    } catch {
+      /* poster optional */
+    }
+    const tags = ["reel"] as string[];
+    if (mediaDuration > 0.5 && trimEnd - trimStart >= 0.35 && trimEnd <= mediaDuration + 0.01) {
+      tags.push(`trim:${trimStart.toFixed(2)}:${trimEnd.toFixed(2)}`);
+    }
     add.mutate(
       {
         kind: "reel",
@@ -98,9 +154,11 @@ export default function CreateReel() {
         title: caption.split(/[.!\n]/)[0]?.slice(0, 72) ?? "Reel",
         body: caption,
         videoUrl,
-        coverUrl: coverUrl ?? "",
+        coverUrl,
         language,
-        tags: ["reel"],
+        tags,
+        accessType: tipLock ? "tip" : "free",
+        minTip: tipLock ? minTip : undefined,
       },
       {
         onSuccess: () => {
@@ -124,12 +182,27 @@ export default function CreateReel() {
       <div className="px-5 pt-6 flex flex-col items-center gap-4">
         <input ref={videoInputRef} type="file" accept="video/mp4,video/webm,video/quicktime" className="hidden" onChange={(e) => void onVideoSelected(e.target.files?.[0])} />
         <input ref={cameraInputRef} type="file" accept="video/*" capture="environment" className="hidden" onChange={(e) => void onVideoSelected(e.target.files?.[0])} />
-        <input ref={coverInputRef} type="file" accept="image/*" className="hidden" onChange={onCoverSelected} />
 
         <div className="w-full max-w-[320px] aspect-[9/16] rounded-3xl overflow-hidden bg-black relative border border-border/60 shadow-xl">
           {videoPreview ? (
             <>
-              <video src={videoPreview} className="w-full h-full object-cover" muted playsInline loop autoPlay />
+              <video
+                ref={previewVideoRef}
+                src={videoPreview}
+                className="w-full h-full object-cover"
+                muted
+                playsInline
+                loop
+                autoPlay
+                onLoadedMetadata={(e) => {
+                  const d = e.currentTarget.duration;
+                  if (Number.isFinite(d) && d > 0) {
+                    setMediaDuration(d);
+                    setTrimEnd(d);
+                    setTrimStart(0);
+                  }
+                }}
+              />
               {videoUploading && (
                 <div className="absolute inset-0 bg-black/55 flex items-center justify-center">
                   <Loader2 className="animate-spin text-white" size={28} />
@@ -142,6 +215,7 @@ export default function CreateReel() {
                   if (videoPreview.startsWith("blob:")) URL.revokeObjectURL(videoPreview);
                   setVideoPreview(null);
                   setVideoUrl(undefined);
+                  setMediaDuration(0);
                 }}
               >
                 <X size={14} className="text-white" />
@@ -150,7 +224,7 @@ export default function CreateReel() {
           ) : (
             <div className="w-full h-full flex flex-col items-center justify-center gap-4 px-6 text-center">
               <Video size={36} className="text-muted-foreground" />
-              <p className="text-[13px] text-muted-foreground leading-relaxed">Vertical video — a calm moment, full-screen for readers.</p>
+              <p className="text-[13px] text-muted-foreground leading-relaxed">Vertical video — full-screen for readers. Poster is captured from your clip automatically.</p>
               <div className="flex flex-col gap-2 w-full">
                 <motion.button type="button" whileTap={{ scale: 0.98 }} onClick={pickGallery} className="w-full py-3 rounded-2xl bg-foreground text-background text-[14px] font-medium">
                   Choose video
@@ -163,9 +237,30 @@ export default function CreateReel() {
           )}
         </div>
 
-        <button type="button" onClick={() => coverInputRef.current?.click()} className="text-[12px] text-muted-foreground hover:text-foreground transition-colors">
-          {coverUploading ? "Uploading cover…" : coverUrl ? "Replace thumbnail (optional)" : "Add custom thumbnail (optional)"}
-        </button>
+        {videoPreview && mediaDuration > 0.8 && (
+          <div className="w-full max-w-[320px] space-y-2">
+            <div className="text-[11px] text-muted-foreground">Trim · start {trimStart.toFixed(1)}s</div>
+            <input
+              type="range"
+              min={0}
+              max={Math.max(0, trimEnd - 0.35)}
+              step={0.05}
+              value={Math.min(trimStart, trimEnd - 0.35)}
+              onChange={(e) => setTrimStart(Number(e.target.value))}
+              className="w-full accent-foreground"
+            />
+            <div className="text-[11px] text-muted-foreground">Trim · end {trimEnd.toFixed(1)}s</div>
+            <input
+              type="range"
+              min={trimStart + 0.35}
+              max={mediaDuration}
+              step={0.05}
+              value={Math.max(trimEnd, trimStart + 0.35)}
+              onChange={(e) => setTrimEnd(Number(e.target.value))}
+              className="w-full accent-foreground"
+            />
+          </div>
+        )}
       </div>
 
       <div className="px-5 mt-6 space-y-4 flex-1">
@@ -183,6 +278,23 @@ export default function CreateReel() {
             </button>
           ))}
         </div>
+        <label className="flex items-center gap-3 text-[13px] text-muted-foreground cursor-pointer select-none">
+          <input type="checkbox" checked={tipLock} onChange={(e) => setTipLock(e.target.checked)} className="rounded border-border" />
+          Tip-to-watch (premium lock)
+        </label>
+        {tipLock ? (
+          <div className="flex items-center gap-2 text-[13px]">
+            <span className="text-muted-foreground">Min tip ₹</span>
+            <input
+              type="number"
+              min={10}
+              max={5000}
+              value={minTip}
+              onChange={(e) => setMinTip(Number(e.target.value) || 10)}
+              className="w-24 bg-card border border-border rounded-xl px-3 py-2 outline-none"
+            />
+          </div>
+        ) : null}
       </div>
 
       <div className="px-5 py-8">
@@ -190,7 +302,7 @@ export default function CreateReel() {
           type="button"
           whileTap={{ scale: 0.98 }}
           disabled={!caption.trim() || !videoUrl || add.isPending || videoUploading}
-          onClick={publish}
+          onClick={() => void publish()}
           className="w-full py-3.5 rounded-2xl bg-foreground text-background text-[14px] font-medium disabled:opacity-45"
         >
           {add.isPending ? "Publishing…" : "Publish reel"}

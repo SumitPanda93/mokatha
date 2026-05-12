@@ -6,10 +6,9 @@ import { useParams, useLocation, Link } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
 import { useTitle } from "@/hooks/useTitle";
 import {
-  useMehfil,
+  useMehfilRoom,
   useUser,
   getCurrentUserId,
-  useEarnInkPoints,
   useMehfilRealtime,
   useMehfilQueue,
   useMehfilQueueRealtime,
@@ -21,14 +20,17 @@ import {
   useEndMehfil,
   useStartMehfil,
   usePublishedMehfilReplay,
+  useHostInviteSpeaker,
+  useHostRemoveFromStage,
 } from "@/lib/store";
 import MehfilReplaySheet from "@/components/MehfilReplaySheet";
 import SupportSheet from "@/components/SupportSheet";
 import {
   Mic, MicOff, Send, Hand, Settings, X, CheckCircle, XCircle, Radio, Users,
+  UserPlus,
 } from "lucide-react";
 import { isLiveKitConfigured } from "@/lib/livekit";
-import { OVERLAY_FADE, PAGE_ENTER } from "@/lib/motionTokens";
+import { OVERLAY_FADE, PAGE_ENTER, SHEET_SPRING } from "@/lib/motionTokens";
 import {
   useMehfilRoomSession,
   type PresencePayload,
@@ -101,8 +103,8 @@ function StageSpeaker({ userId, row }: { userId: string; row?: PresencePayload }
       animate={{ opacity: 1, y: 0 }}
       className="mt-6 px-4 py-3 rounded-2xl flex items-center gap-3"
       style={{
-        background: "linear-gradient(135deg, rgba(143,255,223,0.08), rgba(201,168,76,0.05))",
-        border: "1px solid rgba(143,255,223,0.25)",
+        border: "1px solid rgba(255,255,255,0.09)",
+        background: "rgba(255,255,255,0.03)",
       }}
     >
       <div className="relative w-11 h-11 rounded-full overflow-hidden shrink-0 ring-1 ring-white/15">
@@ -152,7 +154,7 @@ export default function MehfilRoomPage() {
   const [, setLocation] = useLocation();
   const navigateOut = () => setLocation("/mehfil");
 
-  const { data: mehfil, isLoading } = useMehfil(id);
+  const { data: mehfil, isLoading } = useMehfilRoom(id);
   const { data: host } = useUser(mehfil?.hostId ?? "");
   const me = getCurrentUserId();
 
@@ -171,8 +173,12 @@ export default function MehfilRoomPage() {
   const endTurnMut = useEndSpeakerTurn();
   const endMehfilMut = useEndMehfil();
   const startMehfilMut = useStartMehfil();
+  const hostInviteMut = useHostInviteSpeaker();
+  const hostRemoveMut = useHostRemoveFromStage();
 
   const [dock, setDock] = useState<"chat" | "stage">("chat");
+  const [hostGoingLive, setHostGoingLive] = useState(false);
+  const [participantsOpen, setParticipantsOpen] = useState(false);
 
   if (isLoading || !mehfil) {
     return (
@@ -211,29 +217,82 @@ export default function MehfilRoomPage() {
   }
 
   if (!session.joined) {
+    const dbLive = mehfil.isLive;
+    const phaseLabel = session.isHost
+      ? (hostGoingLive && !dbLive ? "Going live…" : dbLive ? "Live" : "Scheduled")
+      : dbLive ? "Live" : "Scheduled";
+    const listenerCanEnter = dbLive;
+    const pulseLive = dbLive || (session.isHost && hostGoingLive);
+
     return (
       <div className="min-h-[100dvh] flex flex-col px-6 pb-12 font-['Inter']" style={{ background: BG, color: FG }}>
         <div className="pt-12 pb-8 flex justify-between items-center">
           <button type="button" onClick={navigateOut} className="text-[13px]" style={{ color: "rgba(245,243,239,0.5)" }}>←</button>
-          <span className="text-[10px] tracking-[0.25em] uppercase" style={{ color: "rgba(232,177,74,0.55)" }}>{mehfil.isLive ? "Live" : "Soon"}</span>
+          <span
+            className="text-[10px] tracking-[0.25em] uppercase font-semibold"
+            style={{
+              color: pulseLive ? "rgba(143,255,223,0.88)" : "rgba(232,177,74,0.55)",
+            }}
+          >
+            {phaseLabel}
+          </span>
           <span className="w-8" />
         </div>
         <div className="flex-1 flex flex-col items-center justify-center text-center gap-8">
           <div className="relative w-[140px] h-[140px] flex items-center justify-center">
-            <div className="absolute inset-6 rounded-full blur-2xl opacity-30" style={{ background: "radial-gradient(circle, #f76a4a, transparent)" }} />
-            <div className="relative w-[88px] h-[88px] rounded-full overflow-hidden ring-2 ring-white/10">
-              <img src={host?.avatarUrl || mehfil.coverUrl} alt="" className="w-full h-full object-cover" />
-            </div>
+            <div
+              className="absolute inset-0 rounded-full opacity-[0.38]"
+              style={{
+                background: "radial-gradient(circle at 50% 45%, rgba(201,168,76,0.4), transparent 62%)",
+                filter: "blur(20px)",
+              }}
+            />
+            {session.isHost ? (
+              <div className="relative w-[88px] h-[88px] rounded-full overflow-hidden ring-1 ring-white/15">
+                {(host?.avatarUrl || mehfil.coverUrl) ? (
+                  <img src={host?.avatarUrl || mehfil.coverUrl} alt="" className="w-full h-full object-cover" />
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center text-lg bg-white/[0.06]">{mehfil.title.charAt(0)}</div>
+                )}
+              </div>
+            ) : (
+              <div className="relative w-[92px] h-[92px] rounded-full flex items-center justify-center border border-white/[0.12] bg-white/[0.04] backdrop-blur-sm">
+                <Radio size={28} style={{ color: GOLD, opacity: 0.85 }} />
+              </div>
+            )}
           </div>
           <div>
             <h1 className="font-['Playfair_Display'] text-[28px] leading-tight mb-2">{mehfil.title}</h1>
             <p className="text-[13px]" style={{ color: "rgba(245,243,239,0.45)" }}>{host?.displayName ?? "Host"}</p>
           </div>
-          <motion.button type="button" whileTap={{ scale: 0.97 }} onClick={() => void session.joinRoom()}
-            className="px-12 py-3.5 rounded-full text-[15px] font-medium"
-            style={{ background: mehfil.isLive ? `linear-gradient(135deg,${GOLD},#f76a4a)` : "rgba(255,255,255,0.08)", color: mehfil.isLive ? BG : FG }}>
-            {mehfil.isLive ? "Join gathering" : "Remind me"}
-          </motion.button>
+          {session.isHost ? (
+            <motion.button
+              type="button"
+              whileTap={{ scale: 0.97 }}
+              onClick={() => void session.joinRoom()}
+              className="px-12 py-3.5 rounded-full text-[15px] font-medium border border-white/[0.12]"
+              style={{ background: "rgba(255,255,255,0.06)", color: FG }}
+            >
+              Enter studio
+            </motion.button>
+          ) : (
+            <motion.button
+              type="button"
+              whileTap={{ scale: listenerCanEnter ? 0.97 : 1 }}
+              disabled={!listenerCanEnter}
+              onClick={() => {
+                if (listenerCanEnter) void session.joinRoom();
+              }}
+              className="px-12 py-3.5 rounded-full text-[15px] font-medium transition-opacity"
+              style={{
+                background: listenerCanEnter ? `linear-gradient(135deg,${GOLD},#f76a4a)` : "rgba(255,255,255,0.06)",
+                color: listenerCanEnter ? BG : "rgba(245,243,239,0.35)",
+                opacity: listenerCanEnter ? 1 : 0.88,
+              }}
+            >
+              {listenerCanEnter ? "Join gathering" : "Waiting for host"}
+            </motion.button>
+          )}
         </div>
       </div>
     );
@@ -242,6 +301,9 @@ export default function MehfilRoomPage() {
   const activeSpeakerPresence = session.activeSpeaker
     ? session.presence.find((p) => p.user_id === session.activeSpeaker!.userId)
     : undefined;
+
+  const dbLiveRoom = mehfil.isLive;
+  const livePulse = dbLiveRoom || (session.isHost && hostGoingLive);
 
   return (
     <motion.div
@@ -285,27 +347,40 @@ export default function MehfilRoomPage() {
         )}
       </AnimatePresence>
 
-      <header className="relative z-20 flex items-center justify-between px-5 pt-[max(env(safe-area-inset-top),16px)] pb-3">
-        <button type="button" onClick={session.leaveRoom} className="text-[13px] px-3 py-1.5 rounded-full bg-white/[0.06] border border-white/[0.08]">Leave</button>
+      <header className="relative z-20 flex items-center justify-between px-5 pt-[max(env(safe-area-inset-top),16px)] pb-3 gap-2">
+        <button type="button" onClick={session.leaveRoom} className="text-[13px] px-3 py-1.5 rounded-full bg-white/[0.06] border border-white/[0.08] shrink-0">Leave</button>
         <div className="flex items-center gap-2 px-3 py-1 rounded-full border border-white/[0.1] bg-black/20 backdrop-blur-md">
-          <span className={`w-1.5 h-1.5 rounded-full ${mehfil.isLive ? "bg-emerald-400 animate-pulse" : "bg-white/30"}`} />
-          <span className="text-[10px] tracking-[0.2em] uppercase font-semibold">Live</span>
+          <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${livePulse ? "bg-emerald-400 animate-pulse" : "bg-white/30"}`} />
+          <span className="text-[10px] tracking-[0.2em] uppercase font-semibold whitespace-nowrap">
+            {livePulse ? "Live" : session.isHost ? "Studio" : "Lobby"}
+          </span>
           {isLiveKitConfigured() && (
-            <span className="w-1.5 h-1.5 rounded-full ml-1" style={{ background: session.lkConnected ? "#6be89e" : session.lkReconnecting ? GOLD : "rgba(255,255,255,0.25)" }} />
+            <span className="w-1.5 h-1.5 rounded-full ml-1 shrink-0" style={{ background: session.lkConnected ? "#6be89e" : session.lkReconnecting ? GOLD : "rgba(255,255,255,0.25)" }} />
           )}
         </div>
-        {session.isHost ? (
-          <button type="button" onClick={() => session.setHostMenuOpen((v) => !v)} className="w-9 h-9 rounded-full bg-white/[0.06] flex items-center justify-center border border-white/[0.08]">
-            <Settings size={15} className="opacity-70" />
+        <div className="flex items-center gap-1.5 shrink-0">
+          <button type="button" onClick={() => setParticipantsOpen(true)} className="w-9 h-9 rounded-full bg-white/[0.06] flex items-center justify-center border border-white/[0.08]" aria-label="Participants">
+            <Users size={15} className="opacity-75" />
           </button>
-        ) : <span className="w-9" />}
+          {session.isHost ? (
+            <button type="button" onClick={() => session.setHostMenuOpen((v) => !v)} className="w-9 h-9 rounded-full bg-white/[0.06] flex items-center justify-center border border-white/[0.08]">
+              <Settings size={15} className="opacity-70" />
+            </button>
+          ) : null}
+        </div>
       </header>
 
       <AnimatePresence>
         {session.hostMenuOpen && session.isHost && (
           <motion.div initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="absolute top-[72px] right-5 z-50 w-52 rounded-2xl border border-white/10 overflow-hidden shadow-xl" style={{ background: "#141018" }}>
-            {!mehfil.isLive && (
-              <button type="button" className="w-full text-left px-4 py-3 text-[13px]" style={{ color: GOLD }} onClick={() => { startMehfilMut.mutate(id); session.setHostMenuOpen(false); }}><Radio size={14} className="inline mr-2" />Go live</button>
+            {!dbLiveRoom && (
+              <button type="button" className="w-full text-left px-4 py-3 text-[13px]" style={{ color: GOLD }} onClick={() => {
+                setHostGoingLive(true);
+                startMehfilMut.mutate(id, {
+                  onSettled: () => setHostGoingLive(false),
+                });
+                session.setHostMenuOpen(false);
+              }}><Radio size={14} className="inline mr-2" />Go live</button>
             )}
             {session.activeSpeaker && (
               <button type="button" className="w-full text-left px-4 py-3 text-[13px] border-t border-white/[0.06]" onClick={() => { endTurnMut.mutate(id); session.setHostMenuOpen(false); }}><MicOff size={14} className="inline mr-2 opacity-70" />End turn</button>
@@ -316,8 +391,14 @@ export default function MehfilRoomPage() {
       </AnimatePresence>
 
       <main className="relative z-10 flex-1 flex flex-col items-center px-6 pt-2 pb-4">
-        <div className="w-[104px] h-[104px] rounded-full overflow-hidden ring-2 ring-white/10 mb-4 shadow-2xl shadow-black/50">
-          <img src={host?.avatarUrl || mehfil.coverUrl} alt="" className="w-full h-full object-cover" />
+        <div className="w-[104px] h-[104px] rounded-full overflow-hidden ring-1 ring-white/12 mb-4 shadow-[0_20px_50px_rgba(0,0,0,0.55)] bg-white/[0.04]">
+          {(host?.avatarUrl || mehfil.coverUrl) ? (
+            <img src={host?.avatarUrl || mehfil.coverUrl} alt="" className="w-full h-full object-cover" />
+          ) : (
+            <div className="w-full h-full flex items-center justify-center font-['Playfair_Display'] text-3xl opacity-40">
+              {(host?.displayName ?? mehfil.title).charAt(0)}
+            </div>
+          )}
         </div>
         <p className="text-[11px] uppercase tracking-[0.2em] mb-1" style={{ color: "rgba(232,177,74,0.55)" }}>Host</p>
         <h2 className="font-['Playfair_Display'] text-[22px] text-center leading-tight">{host?.displayName ?? "Host"}</h2>
@@ -412,28 +493,110 @@ export default function MehfilRoomPage() {
         )}
       </div>
 
-      <footer className="relative z-10 px-5 pt-3 pb-[max(env(safe-area-inset-bottom),16px)] flex items-center justify-between gap-3 border-t border-white/[0.05]">
-        <motion.button type="button" whileTap={{ scale: 0.96 }} onClick={() => session.setSupportOpen(true)} className="px-4 py-2.5 rounded-full text-[12px] border border-white/[0.08] bg-white/[0.04]">Chai</motion.button>
-        <motion.button type="button" whileTap={{ scale: 0.96 }}
-          onClick={async () => {
-            const nm = !session.muted;
-            session.setMuted(nm);
-            await session.livekitRef.current?.setMicEnabled(!nm);
-          }}
-          className="w-12 h-12 rounded-full flex items-center justify-center border border-white/[0.1]"
-          style={{ background: session.muted ? "rgba(247,106,74,0.12)" : "rgba(255,255,255,0.06)" }}>
-          {session.muted ? <MicOff size={18} className="text-rose-300" /> : <Mic size={18} className="opacity-70" />}
-        </motion.button>
-        {!session.isHost ? (
-          <motion.button type="button" whileTap={{ scale: 0.96 }} onClick={() => setDock("stage")} className="flex items-center gap-2 px-4 py-2.5 rounded-full text-[12px] bg-white/[0.05] border border-white/[0.08]">
-            <Hand size={14} /><span>Stage</span>
+      <footer className="relative z-10 flex justify-center px-4 pt-3 pb-[max(env(safe-area-inset-bottom),16px)] pointer-events-none">
+        <div className="pointer-events-auto flex items-center gap-2 px-2.5 py-2 rounded-[999px] border border-white/[0.09] bg-black/55 backdrop-blur-xl shadow-[0_16px_48px_rgba(0,0,0,0.5)]">
+          <motion.button type="button" whileTap={{ scale: 0.96 }} onClick={() => session.setSupportOpen(true)} className="px-4 py-2.5 rounded-full text-[12px] border border-white/[0.08] bg-white/[0.05]">Chai</motion.button>
+          <motion.button type="button" whileTap={{ scale: 0.96 }}
+            onClick={async () => {
+              const nm = !session.muted;
+              session.setMuted(nm);
+              await session.livekitRef.current?.setMicEnabled(!nm);
+            }}
+            className="w-12 h-12 rounded-full flex items-center justify-center border border-white/[0.1]"
+            style={{ background: session.muted ? "rgba(247,106,74,0.12)" : "rgba(255,255,255,0.06)" }}>
+            {session.muted ? <MicOff size={18} className="text-rose-300" /> : <Mic size={18} className="opacity-70" />}
           </motion.button>
-        ) : (
-          <motion.button type="button" whileTap={{ scale: 0.96 }} onClick={() => setDock("stage")} className="flex items-center gap-2 px-4 py-2.5 rounded-full text-[12px] bg-white/[0.05] border border-white/[0.08]">
-            <Users size={14} /><span>Queue</span>
-          </motion.button>
-        )}
+          {!session.isHost ? (
+            <motion.button type="button" whileTap={{ scale: 0.96 }} onClick={() => setDock("stage")} className="flex items-center gap-2 px-4 py-2.5 rounded-full text-[12px] bg-white/[0.05] border border-white/[0.08]">
+              <Hand size={14} /><span>Stage</span>
+            </motion.button>
+          ) : (
+            <motion.button type="button" whileTap={{ scale: 0.96 }} onClick={() => setDock("stage")} className="flex items-center gap-2 px-4 py-2.5 rounded-full text-[12px] bg-white/[0.05] border border-white/[0.08]">
+              <Users size={14} /><span>Queue</span>
+            </motion.button>
+          )}
+        </div>
       </footer>
+
+      <AnimatePresence>
+        {participantsOpen && (
+          <motion.div
+            className="fixed inset-0 z-[70] flex flex-col justify-end"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+          >
+            <button
+              type="button"
+              className="absolute inset-0 w-full h-full bg-black/55 backdrop-blur-sm border-0 cursor-default p-0"
+              aria-label="Close participants"
+              onClick={() => setParticipantsOpen(false)}
+            />
+            <motion.div
+              initial={{ y: "100%" }}
+              animate={{ y: 0 }}
+              exit={{ y: "100%" }}
+              transition={SHEET_SPRING}
+              className="relative rounded-t-[28px] border border-white/[0.08] max-h-[72vh] flex flex-col overflow-hidden mx-0"
+              style={{ background: "#100c12" }}
+              role="dialog"
+              aria-modal="true"
+            >
+              <div className="flex items-center justify-between px-5 pt-4 pb-3 border-b border-white/[0.06]">
+                <span className="text-[11px] uppercase tracking-[0.22em]" style={{ color: "rgba(245,243,239,0.45)" }}>In this gathering</span>
+                <button type="button" className="text-[13px] opacity-50 font-['Inter']" onClick={() => setParticipantsOpen(false)}>Done</button>
+              </div>
+              <div className="overflow-y-auto px-4 py-3 space-y-1 pb-[max(env(safe-area-inset-bottom),20px)]">
+                {[...session.presence].sort((a, b) => {
+                  const rank = (r: PresencePayload["role"]) => (r === "host" ? 0 : r === "speaker" ? 1 : 2);
+                  return rank(a.role) - rank(b.role);
+                }).map((p) => (
+                  <div key={p.user_id} className="flex items-center gap-3 py-2.5 border-b border-white/[0.05] last:border-0">
+                    <div className="w-10 h-10 rounded-full overflow-hidden bg-white/[0.06] shrink-0">
+                      {p.avatar_url ? <img src={p.avatar_url} alt="" className="w-full h-full object-cover" /> : (
+                        <div className="w-full h-full flex items-center justify-center text-xs font-medium">{p.display_name.charAt(0)}</div>
+                      )}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-[14px] truncate">{p.display_name}</div>
+                      <div className="text-[10px] uppercase tracking-wider opacity-40">{p.role}</div>
+                    </div>
+                    {session.isHost && p.user_id !== mehfil.hostId && (
+                      <div className="flex items-center gap-1 shrink-0">
+                        {p.role === "listener" && (
+                          <button
+                            type="button"
+                            className="w-9 h-9 rounded-full flex items-center justify-center border border-white/10 bg-white/[0.05]"
+                            disabled={hostInviteMut.isPending}
+                            onClick={() => hostInviteMut.mutate({ mehfilId: id, userId: p.user_id }, { onSuccess: () => setParticipantsOpen(false) })}
+                            aria-label="Invite to speak"
+                          >
+                            <UserPlus size={15} />
+                          </button>
+                        )}
+                        {p.role === "speaker" && (
+                          <button
+                            type="button"
+                            className="w-9 h-9 rounded-full flex items-center justify-center border border-rose-500/25 bg-rose-500/10"
+                            disabled={hostRemoveMut.isPending}
+                            onClick={() => hostRemoveMut.mutate({ mehfilId: id, userId: p.user_id })}
+                            aria-label="Remove from stage"
+                          >
+                            <X size={14} className="text-rose-300" />
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ))}
+                {session.presence.length === 0 && (
+                  <div className="text-center py-10 text-[13px] opacity-35 font-['Inter']">Quiet room — presence appears as people arrive.</div>
+                )}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <AnimatePresence>
         {session.supportOpen && mehfil.hostId && (

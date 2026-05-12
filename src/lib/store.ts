@@ -1575,6 +1575,16 @@ export const useUserByHandle = (h: string) => useQ(QK.userByHandle(h), () => get
 export const usePostsByAuthor = (id: string) => useQ(QK.postsByAuthor(id), () => getPostsByAuthor(id));
 export const useMehfils = () => useQ(QK.mehfils, getMehfils);
 export const useMehfil = (id: string) => useQ(QK.mehfil(id), () => getMehfil(id));
+
+/** Aggressive Mehfil row refresh while inside the room (same cache key as {@link useMehfil}). */
+export const useMehfilRoom = (id: string) =>
+  useQuery({
+    queryKey: QK.mehfil(id),
+    queryFn: () => getMehfil(id),
+    enabled: !!id,
+    staleTime: 0,
+    refetchInterval: (q) => (q.state.data?.isLive ? 5_000 : false),
+  });
 export const useTransactions = (id?: string) => {
   const userId = id ?? getCurrentUserId() ?? "";
   // staleTime:0 ensures fresh data on every mount (wallet statements must be current)
@@ -1635,7 +1645,19 @@ export function useFollow() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (vars: { userId: string; on: boolean }) => vars.on ? follow(vars.userId) : unfollow(vars.userId),
-    onSuccess: (_, vars) => { qc.invalidateQueries(); toast.success(vars.on ? "Following" : "Unfollowed"); },
+    onSuccess: (_, vars) => {
+      const me = getCurrentUserId() ?? "";
+      qc.invalidateQueries({ queryKey: QK.followers(vars.userId) });
+      qc.invalidateQueries({ queryKey: QK.followers(me) });
+      qc.invalidateQueries({ queryKey: QK.following(me) });
+      qc.invalidateQueries({ queryKey: QK.user(vars.userId) });
+      qc.invalidateQueries({ queryKey: QK.user(me) });
+      qc.invalidateQueries({ queryKey: ["isFollowing", me, vars.userId] });
+      qc.invalidateQueries({ queryKey: QK.notifications });
+      qc.invalidateQueries({ queryKey: [...QK.notifications, "count"] });
+      qc.invalidateQueries({ queryKey: QK.currentUser });
+      toast.success(vars.on ? "Following" : "Unfollowed");
+    },
   });
 }
 
@@ -1946,7 +1968,18 @@ export function useUnlockPostWithTip() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (vars: { postId: string; amount: number }) => unlockPostWithTip(vars.postId, vars.amount),
-    onSuccess: (result) => { qc.invalidateQueries(); if (result === "ok") toast.success("Post unlocked! +10 Ink Points earned"); else toast.error("Insufficient balance"); },
+    onSuccess: (result, vars) => {
+      const me = getCurrentUserId() ?? "";
+      if (result === "ok") {
+        qc.invalidateQueries({ queryKey: ["isPostUnlocked", me, vars.postId] });
+        qc.invalidateQueries({ queryKey: QK.inkReward(me) });
+        qc.invalidateQueries({ queryKey: QK.post(vars.postId) });
+        qc.invalidateQueries({ queryKey: QK.posts });
+        qc.invalidateQueries({ queryKey: QK.trendingPosts });
+        invalidateWallet(qc);
+        toast.success("Post unlocked! +10 Ink Points earned");
+      } else toast.error("Insufficient balance");
+    },
   });
 }
 
@@ -1954,7 +1987,17 @@ export function useUnlockPostWithPoints() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (postId: string) => unlockPostWithPoints(postId),
-    onSuccess: (result) => { qc.invalidateQueries(); if (result === "ok") toast.success("Unlocked with 50 Ink Points!"); else toast.error("You need 50 Ink Points to unlock"); },
+    onSuccess: (result, postId) => {
+      const me = getCurrentUserId() ?? "";
+      if (result === "ok") {
+        qc.invalidateQueries({ queryKey: ["isPostUnlocked", me, postId] });
+        qc.invalidateQueries({ queryKey: QK.inkReward(me) });
+        qc.invalidateQueries({ queryKey: QK.post(postId) });
+        qc.invalidateQueries({ queryKey: QK.posts });
+        qc.invalidateQueries({ queryKey: QK.trendingPosts });
+        toast.success("Unlocked with 50 Ink Points!");
+      } else toast.error("You need 50 Ink Points to unlock");
+    },
   });
 }
 
@@ -2065,6 +2108,7 @@ export function useNotificationsRealtime() {
         .channel("realtime:notifications")
         .on("postgres_changes", { event: "INSERT", schema: "public", table: "notifications", filter: `recipient_id=eq.${me}` }, () => {
           qcNotifRealtimeRef.current?.invalidateQueries({ queryKey: QK.notifications });
+          qcNotifRealtimeRef.current?.invalidateQueries({ queryKey: [...QK.notifications, "count"] });
         })
         .subscribe((status, err) => {
           if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
@@ -2082,6 +2126,86 @@ export function useNotificationsRealtime() {
         supabase.removeChannel(notifRealtimeChannel);
         notifRealtimeChannel = null;
         notifRealtimeUserId = null;
+      }
+    };
+  }, [me]);
+}
+
+let accountSyncRefCount = 0;
+let accountSyncChannel: RealtimeChannel | null = null;
+let accountSyncUserId: string | null = null;
+const qcAccountSyncRef: { current: QueryClient | null } = { current: null };
+
+function invalidateFollowGraphFromFollowRow(qc: QueryClient, me: string, row: Record<string, unknown>) {
+  const fid = row.follower_id as string | undefined;
+  const fed = row.followee_id as string | undefined;
+  const other = fid === me ? fed : fed === me ? fid : undefined;
+  qc.invalidateQueries({ queryKey: QK.following(me) });
+  qc.invalidateQueries({ queryKey: QK.followers(me) });
+  qc.invalidateQueries({ queryKey: QK.user(me) });
+  if (other) {
+    qc.invalidateQueries({ queryKey: QK.user(other) });
+    qc.invalidateQueries({ queryKey: QK.followers(other) });
+  }
+  qc.invalidateQueries({ predicate: (q) => q.queryKey[0] === "isFollowing" && q.queryKey[1] === me });
+  qc.invalidateQueries({ queryKey: QK.notifications });
+  qc.invalidateQueries({ queryKey: [...QK.notifications, "count"] });
+}
+
+/** Single Supabase channel for follow edges + ink rewards affecting unlock state (deduped across mounts). */
+export function useAccountSyncRealtime() {
+  const qc = useQueryClient();
+  const me = getCurrentUserId();
+  qcAccountSyncRef.current = qc;
+  useEffect(() => {
+    if (!me) return;
+    accountSyncRefCount++;
+    if (!accountSyncChannel || accountSyncUserId !== me) {
+      if (accountSyncChannel) {
+        supabase.removeChannel(accountSyncChannel);
+        accountSyncChannel = null;
+      }
+      accountSyncUserId = me;
+      accountSyncChannel = supabase
+        .channel(`realtime:account-sync:${me}`)
+        .on("postgres_changes", { event: "INSERT", schema: "public", table: "follows", filter: `follower_id=eq.${me}` }, (payload) => {
+          const qcNow = qcAccountSyncRef.current;
+          if (qcNow) invalidateFollowGraphFromFollowRow(qcNow, me, (payload.new ?? {}) as Record<string, unknown>);
+        })
+        .on("postgres_changes", { event: "DELETE", schema: "public", table: "follows", filter: `follower_id=eq.${me}` }, (payload) => {
+          const qcNow = qcAccountSyncRef.current;
+          if (qcNow) invalidateFollowGraphFromFollowRow(qcNow, me, (payload.old ?? {}) as Record<string, unknown>);
+        })
+        .on("postgres_changes", { event: "INSERT", schema: "public", table: "follows", filter: `followee_id=eq.${me}` }, (payload) => {
+          const qcNow = qcAccountSyncRef.current;
+          if (qcNow) invalidateFollowGraphFromFollowRow(qcNow, me, (payload.new ?? {}) as Record<string, unknown>);
+        })
+        .on("postgres_changes", { event: "DELETE", schema: "public", table: "follows", filter: `followee_id=eq.${me}` }, (payload) => {
+          const qcNow = qcAccountSyncRef.current;
+          if (qcNow) invalidateFollowGraphFromFollowRow(qcNow, me, (payload.old ?? {}) as Record<string, unknown>);
+        })
+        .on("postgres_changes", { event: "UPDATE", schema: "public", table: "ink_rewards", filter: `user_id=eq.${me}` }, () => {
+          qcAccountSyncRef.current?.invalidateQueries({ queryKey: QK.inkReward(me) });
+          qcAccountSyncRef.current?.invalidateQueries({
+            predicate: (q) => q.queryKey[0] === "isPostUnlocked" && q.queryKey[1] === me,
+          });
+        })
+        .subscribe((status, err) => {
+          if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+            logOpsEvent("realtime_channel_issue", {
+              channel: `realtime:account-sync:${me}`,
+              status,
+              message: err?.message ?? "",
+            });
+          }
+        });
+    }
+    return () => {
+      accountSyncRefCount--;
+      if (accountSyncRefCount <= 0 && accountSyncChannel) {
+        supabase.removeChannel(accountSyncChannel);
+        accountSyncChannel = null;
+        accountSyncUserId = null;
       }
     };
   }, [me]);
@@ -2329,6 +2453,31 @@ export async function endSpeakerTurn(mehfilId: string): Promise<void> {
     .update({ status: "done" }).eq("mehfil_id", mehfilId).eq("status", "speaking");
 }
 
+/** Host pulls a listener onto stage immediately (clears any prior speaker slot). */
+export async function hostInviteSpeaker(mehfilId: string, targetUserId: string): Promise<void> {
+  const me = getCurrentUserId();
+  if (!me) throw new Error("not_authenticated");
+  const { data: mf } = await supabase.from("mehfils").select("host_id").eq("id", mehfilId).maybeSingle();
+  if (!mf || mf.host_id !== me) throw new Error("only_host");
+  await supabase.from("mehfil_queue").delete().eq("mehfil_id", mehfilId).eq("user_id", targetUserId);
+  await supabase.from("mehfil_queue")
+    .update({ status: "done" }).eq("mehfil_id", mehfilId).eq("status", "speaking");
+  const { error } = await supabase.from("mehfil_queue").insert({
+    id: `q${uid()}`, mehfil_id: mehfilId, user_id: targetUserId,
+    status: "speaking", requested_at: new Date().toISOString(),
+  });
+  if (error) throw new Error(error.message);
+}
+
+/** Host removes a guest from stage / queue entirely. */
+export async function hostRemoveFromStage(mehfilId: string, targetUserId: string): Promise<void> {
+  const me = getCurrentUserId();
+  if (!me) throw new Error("not_authenticated");
+  const { data: mf } = await supabase.from("mehfils").select("host_id").eq("id", mehfilId).maybeSingle();
+  if (!mf || mf.host_id !== me) throw new Error("only_host");
+  await supabase.from("mehfil_queue").delete().eq("mehfil_id", mehfilId).eq("user_id", targetUserId);
+}
+
 // ── Audio letters ─────────────────────────────────────────────────────────────
 
 export async function getAudioLetters(): Promise<AudioLetter[]> {
@@ -2375,7 +2524,7 @@ export const useMehfilQueue = (mehfilId: string) =>
     queryKey: ["mehfilQueue", mehfilId] as const,
     queryFn: () => getMehfilQueue(mehfilId),
     enabled: !!mehfilId,
-    staleTime: 5_000,
+    staleTime: 0,
   });
 
 export const useAudioLetters = () =>
@@ -2458,6 +2607,31 @@ export function useEndSpeakerTurn() {
   return useMutation({
     mutationFn: async (mehfilId: string) => endSpeakerTurn(mehfilId),
     onSuccess: () => { qc.invalidateQueries(); toast.success("Speaker turn ended"); },
+  });
+}
+
+export function useHostInviteSpeaker() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (vars: { mehfilId: string; userId: string }) => hostInviteSpeaker(vars.mehfilId, vars.userId),
+    onSuccess: (_d, vars) => {
+      qc.invalidateQueries({ queryKey: ["mehfilQueue", vars.mehfilId] });
+      qc.invalidateQueries({ queryKey: QK.mehfil(vars.mehfilId) });
+      toast.success("On stage");
+    },
+    onError: (e: Error) => toast.error(e.message === "only_host" ? "Only the host can invite" : e.message),
+  });
+}
+
+export function useHostRemoveFromStage() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (vars: { mehfilId: string; userId: string }) => hostRemoveFromStage(vars.mehfilId, vars.userId),
+    onSuccess: (_d, vars) => {
+      qc.invalidateQueries({ queryKey: ["mehfilQueue", vars.mehfilId] });
+      toast.success("Removed");
+    },
+    onError: (e: Error) => toast.error(e.message === "only_host" ? "Only the host can remove" : e.message),
   });
 }
 
