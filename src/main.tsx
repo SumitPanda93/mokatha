@@ -1,6 +1,14 @@
 import { createRoot } from "react-dom/client";
 import App from "./App";
 import "./index.css";
+import { logRuntimeError } from "@/lib/observability";
+
+window.addEventListener("error", (event) => {
+  logRuntimeError("window_onerror", event.error ?? event.message);
+});
+window.addEventListener("unhandledrejection", (event) => {
+  logRuntimeError("unhandled_rejection", event.reason);
+});
 
 createRoot(document.getElementById("root")!).render(<App />);
 

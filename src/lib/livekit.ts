@@ -18,6 +18,7 @@ import {
   RoomOptions,
 } from "livekit-client";
 import { supabase } from "./supabase";
+import { logOpsEvent } from "./observability";
 
 export interface LiveKitRoom {
   room: Room;
@@ -121,6 +122,15 @@ export async function connectToMehfil(
     });
   }
 
+  /** Re-prime playback — helps listeners when publishers join slightly ahead of subscription (mobile Safari). */
+  function primePlayback(reason: string) {
+    void room.startAudio().catch(() => {});
+    audioElements.forEach((el) => {
+      if (el.src) tryPlay(el);
+    });
+    if (import.meta.env.DEV) console.debug(`[LiveKit] primePlayback (${reason})`);
+  }
+
   room.on(RoomEvent.TrackSubscribed, (track: RemoteTrack, _pub, _participant: RemoteParticipant) => {
     if (track.kind === Track.Kind.Audio) {
       void room.startAudio().catch(() => {});
@@ -131,7 +141,13 @@ export async function connectToMehfil(
       document.body.appendChild(el);
       audioElements.push(el);
       tryPlay(el);
+      primePlayback("track_subscribed");
     }
+  });
+
+  room.on(RoomEvent.ParticipantConnected, (_participant: RemoteParticipant) => {
+    primePlayback("participant_connected");
+    callbacks.onParticipantCountChange?.(room.remoteParticipants.size + 1);
   });
 
   room.on(RoomEvent.TrackUnsubscribed, (track: RemoteTrack) => {
@@ -147,10 +163,6 @@ export async function connectToMehfil(
         audioElements.splice(i, 1);
       }
     }
-  });
-
-  room.on(RoomEvent.ParticipantConnected, () => {
-    callbacks.onParticipantCountChange?.(room.remoteParticipants.size + 1);
   });
 
   room.on(RoomEvent.ParticipantDisconnected, () => {
@@ -169,10 +181,12 @@ export async function connectToMehfil(
   });
 
   room.on(RoomEvent.Reconnecting, () => {
+    logOpsEvent("livekit_reconnecting", { room_id: roomId });
     callbacks.onReconnecting?.();
   });
 
   room.on(RoomEvent.Reconnected, () => {
+    logOpsEvent("livekit_reconnected", { room_id: roomId });
     callbacks.onReconnected?.();
     void room.startAudio().catch(() => {});
     // Resume any paused audio elements after reconnect
@@ -200,11 +214,19 @@ export async function connectToMehfil(
   try {
     await room.connect(LIVEKIT_URL, token);
     console.log(`[LiveKit] connected to room ${roomId} as ${userId}`);
+    logOpsEvent("livekit_connected", { room_id: roomId, can_publish: canPublish });
     // Helps listeners hear remote audio on mobile Safari / Chrome autoplay rules
     await room.startAudio().catch(() => {});
+    // Deferred primes — autoplay / subscription timing on iOS often needs a second beat.
+    window.setTimeout(() => primePlayback("post_connect_150ms"), 150);
+    window.setTimeout(() => primePlayback("post_connect_650ms"), 650);
     document.addEventListener("visibilitychange", resumePlaybackOnVisible);
   } catch (err) {
     console.error("[LiveKit] connect error", err);
+    logOpsEvent("livekit_connect_failed", {
+      room_id: roomId,
+      message: err instanceof Error ? err.message : String(err),
+    });
     callbacks.onError?.(err instanceof Error ? err : new Error(String(err)));
     return null;
   }

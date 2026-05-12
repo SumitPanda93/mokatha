@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useRef, useState, useCallback, useEffect } from "react";
 import { trackEvent } from "@/lib/analytics";
+import { logOpsEvent } from "@/lib/observability";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -91,7 +92,9 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
     cancelFade();
     if (el.src !== t.audioUrl) { el.src = t.audioUrl; el.load(); }
     el.volume = 0;
-    void el.play().catch(() => {});
+    void el.play().catch(() => {
+      logOpsEvent("playback_start_failed", { post_id: t.postId, kind: t.kind });
+    });
     setTrack(t);
     setPlaying(true);
     if (t.durationSec) setDur(t.durationSec);
@@ -131,7 +134,9 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
     else {
       cancelFade();
       el.volume = 0;
-      void el.play().catch(() => {});
+      void el.play().catch(() => {
+        logOpsEvent("playback_resume_failed", { post_id: track.postId, kind: track.kind });
+      });
       setPlaying(true);
       const start = performance.now();
       const fadeIn = (now: number) => {

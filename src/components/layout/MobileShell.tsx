@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAudioPlayer } from "@/lib/audioContext";
+import { SHEET_SPRING } from "@/lib/motionTokens";
 
 const fmtTime = (s: number) =>
   `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
@@ -24,7 +25,7 @@ function ListeningMode({ onClose }: { onClose: () => void }) {
       initial={{ y: "100%" }}
       animate={{ y: 0 }}
       exit={{ y: "100%" }}
-      transition={{ type: "spring", damping: 34, stiffness: 272, mass: 0.95 }}
+      transition={SHEET_SPRING}
       className="fixed inset-0 z-[60] flex flex-col overflow-hidden"
     >
       {hasGlow ? (

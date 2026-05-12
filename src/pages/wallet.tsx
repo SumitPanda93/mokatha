@@ -79,7 +79,13 @@ export default function Wallet() {
       </div>
 
       {/* Balance card */}
-      <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="mx-5 mt-2 p-6 rounded-2xl relative overflow-hidden shadow-lg" style={{ background: "linear-gradient(135deg, hsl(var(--sage)) 0%, #2E4A2C 100%)" }}>
+      <motion.div
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ type: "spring", damping: 36, stiffness: 260, mass: 0.92 }}
+        className="mx-5 mt-2 p-6 rounded-2xl relative overflow-hidden shadow-lg shadow-black/[0.06]"
+        style={{ background: "linear-gradient(135deg, hsl(var(--sage)) 0%, #2E4A2C 100%)" }}
+      >
         <div className="absolute -top-10 -right-10 w-[150px] h-[150px] rounded-full bg-ochre/30 blur-2xl" />
         <div className="relative z-10">
           <div className="text-[10px] font-['Inter'] tracking-[0.25em] uppercase text-white/70 mb-2">Available Balance</div>
@@ -145,7 +151,7 @@ export default function Wallet() {
               <div className="w-12 h-12 rounded-2xl bg-muted/90 border border-border/60 flex items-center justify-center mx-auto mb-4">
                 <TrendingUp size={20} className="text-muted-foreground/55" />
               </div>
-              <div className="font-['Playfair_Display'] text-[16px] italic text-muted-foreground mb-2">Ledger at rest</div>
+              <div className="font-['Playfair_Display'] text-[17px] not-italic text-muted-foreground mb-2">Ledger at rest</div>
               <p className="text-[12px] text-muted-foreground/70 font-['Inter'] leading-relaxed max-w-xs mx-auto">
                 Your first appreciation will appear here — quiet entries in the margin of your craft.
               </p>

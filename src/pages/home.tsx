@@ -8,6 +8,7 @@ import {
   getCurrentUserId, Post, useIsPostUnlocked,
   usePostsRealtime, useMehfilRealtime, useUnreadCount, useNotificationsRealtime,
 } from "@/lib/store";
+import { SHEET_SPRING } from "@/lib/motionTokens";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -198,7 +199,7 @@ function TextCard({ post, onTip }: { post: Post; onTip: () => void }) {
 
         {/* Literary title + excerpt */}
         <Link href={`/post/${post.id}`} className="block group">
-          <div className="text-[22px] font-['Playfair_Display'] font-normal text-foreground leading-[1.3] mb-2.5 group-hover:text-terracotta transition-colors">
+          <div className="text-[22px] font-['Playfair_Display'] font-normal text-foreground leading-[1.28] mb-2.5 group-hover:text-terracotta transition-colors">
             {post.title}
           </div>
           {post.body && (
@@ -261,8 +262,7 @@ function ReelCard({ post, onTip }: { post: Post; onTip: () => void }) {
     <motion.div
       initial={{ opacity: 0, y: 6 }}
       animate={{ opacity: 1, y: 0 }}
-      className={`${FEED_CARD} relative`}
-      style={{ boxShadow: "0 14px 42px rgba(0,0,0,0.22)" }}
+      className={`${FEED_CARD} relative shadow-lg shadow-black/[0.08]`}
     >
       {/* Full-height cinematic canvas */}
       <div className="relative overflow-hidden" style={{ aspectRatio: "4/5" }}>
@@ -339,7 +339,7 @@ function ReelCard({ post, onTip }: { post: Post; onTip: () => void }) {
           </div>
 
           {/* Title — literary typography */}
-          <div className="font-['Playfair_Display'] text-[22px] text-white leading-[1.25] italic"
+          <div className="font-['Playfair_Display'] text-[22px] text-white leading-[1.28] italic"
             style={{ textShadow: "0 2px 12px rgba(0,0,0,0.6)" }}>
             <span className="line-clamp-3">{post.title}</span>
           </div>
@@ -391,7 +391,7 @@ function TipSheet({ postId, onClose }: { postId: string; onClose: () => void }) 
     <motion.div className="fixed inset-0 bg-black/50 z-50 flex items-end justify-center"
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose}>
       <motion.div initial={{ opacity: 0, y: "100%" }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: "100%" }}
-        transition={{ type: "spring", damping: 34, stiffness: 280, mass: 0.92 }}
+        transition={SHEET_SPRING}
         onClick={(e) => e.stopPropagation()}
         className="w-full max-w-[430px] bg-background rounded-t-3xl px-6 pt-4 pb-10">
         <div className="w-10 h-1 rounded-full bg-border mx-auto mb-5" />

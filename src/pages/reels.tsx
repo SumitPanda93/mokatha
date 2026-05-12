@@ -8,15 +8,18 @@ import { ArrowLeft, Heart, MessageCircle, Pause, Play } from "lucide-react";
 import { useTitle } from "@/hooks/useTitle";
 import { useFeed, Post, useLike, useUser } from "@/lib/store";
 import { useAudioPlayer } from "@/lib/audioContext";
+import { EASE_CINEMA } from "@/lib/motionTokens";
 
 function ReelSlide({
   post,
   active,
   index,
+  hasAudio,
 }: {
   post: Post;
   active: boolean;
   index: number;
+  hasAudio: boolean;
 }) {
   const { data: author } = useUser(post.authorId);
   const like = useLike(post.id);
@@ -39,9 +42,10 @@ function ReelSlide({
       style={{ scrollSnapStop: "always" }}
       initial={false}
       animate={{
-        opacity: active ? 1 : 0.76,
+        opacity: active ? 1 : 0.72,
+        scale: active ? 1 : 0.992,
       }}
-      transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+      transition={{ duration: active ? 0.58 : 0.72, ease: EASE_CINEMA }}
     >
       {post.coverUrl ? (
         <img
@@ -84,14 +88,19 @@ function ReelSlide({
           animate={{ y: active ? 0 : 6, opacity: active ? 1 : 0.88 }}
           transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
         >
-          <div className="flex items-center gap-2 mb-2">
+          <div className="flex items-center gap-2 mb-2 flex-wrap">
             <span className="text-[9px] font-['Inter'] tracking-[0.32em] uppercase px-2.5 py-1 rounded-full backdrop-blur-md font-semibold"
               style={{ background: "rgba(155,89,182,0.55)", color: "rgba(255,255,255,0.95)", border: "1px solid rgba(255,255,255,0.12)" }}>
               Reel
             </span>
-            {active && (
+            {active && hasAudio && (
               <span className="text-[9px] font-['Inter'] tracking-[0.22em] uppercase text-white/50">
                 Listening
+              </span>
+            )}
+            {active && !hasAudio && (
+              <span className="text-[9px] font-['Inter'] tracking-[0.22em] uppercase text-white/42">
+                Visual
               </span>
             )}
           </div>
@@ -160,7 +169,7 @@ export default function ReelsBrowse() {
   useTitle("Reels");
   const [, setLocation] = useLocation();
   const { data: posts = [], isLoading } = useFeed();
-  const reels = useMemo(() => posts.filter((p) => p.kind === "reel" && p.audioUrl), [posts]);
+  const reels = useMemo(() => posts.filter((p) => p.kind === "reel"), [posts]);
   const containerRef = useRef<HTMLDivElement>(null);
   const [active, setActive] = useState(0);
   const { play, pause, playing, track } = useAudioPlayer();
@@ -193,7 +202,7 @@ export default function ReelsBrowse() {
         let bestRatio = 0;
         for (const e of entries) {
           const ratio = e.intersectionRatio;
-          if (ratio < 0.45) continue;
+          if (ratio < 0.42) continue;
           const i = Number.parseInt(e.target.getAttribute("data-reel-index") ?? "", 10);
           if (!Number.isFinite(i)) continue;
           if (ratio > bestRatio) {
@@ -203,7 +212,7 @@ export default function ReelsBrowse() {
         }
         if (bestIdx >= 0) setActive(bestIdx);
       },
-      { root, threshold: [0.45, 0.6, 0.75, 0.9] },
+      { root, threshold: [0.42, 0.52, 0.62, 0.72, 0.82, 0.92], rootMargin: "0px 0px -6% 0px" },
     );
     slides.forEach((el) => obs.observe(el));
     return () => obs.disconnect();
@@ -215,7 +224,13 @@ export default function ReelsBrowse() {
     if (reels.length > 0 && active !== activeSafe) setActive(activeSafe);
   }, [reels.length, active, activeSafe]);
 
-  const nextAudioUrl = reels[activeSafe + 1]?.audioUrl;
+  const nextAudioUrl = useMemo(() => {
+    for (let j = activeSafe + 1; j < reels.length; j++) {
+      const u = reels[j]?.audioUrl;
+      if (u) return u;
+    }
+    return undefined;
+  }, [reels, activeSafe]);
 
   useEffect(() => {
     if (!nextAudioUrl) return;
@@ -229,7 +244,23 @@ export default function ReelsBrowse() {
     };
   }, [nextAudioUrl]);
 
+  /** Warm upcoming covers to reduce pop-in between snaps */
+  useEffect(() => {
+    reels.slice(activeSafe + 1, activeSafe + 4).forEach((p) => {
+      if (!p.coverUrl) return;
+      const img = new Image();
+      img.decoding = "async";
+      img.src = p.coverUrl;
+    });
+  }, [reels, activeSafe]);
+
   const activePost = reels[activeSafe];
+  const activeHasAudio = Boolean(activePost?.audioUrl);
+
+  useEffect(() => {
+    if (!activePost) return;
+    if (!activePost.audioUrl) pause();
+  }, [activePost?.id, activePost?.audioUrl, pause]);
 
   useEffect(() => {
     if (!activePost?.audioUrl) return;
@@ -263,17 +294,22 @@ export default function ReelsBrowse() {
         <motion.button
           type="button"
           whileTap={{ scale: 0.94 }}
-          onClick={() => (isCurrentPlaying ? pause() : activePost?.audioUrl && play({
-            postId: activePost.id,
-            title: activePost.title,
-            audioUrl: activePost.audioUrl,
-            coverUrl: activePost.coverUrl,
-            kind: "reel",
-            durationSec: activePost.durationSec,
-            tags: activePost.tags,
-          }))}
-          className="pointer-events-auto w-10 h-10 rounded-full flex items-center justify-center backdrop-blur-md border border-white/12 bg-black/25 transition-colors duration-300"
-          aria-label={isCurrentPlaying ? "Pause" : "Play"}
+          onClick={() => {
+            if (!activePost?.audioUrl) return;
+            if (isCurrentPlaying) pause();
+            else play({
+              postId: activePost.id,
+              title: activePost.title,
+              audioUrl: activePost.audioUrl,
+              coverUrl: activePost.coverUrl,
+              kind: "reel",
+              durationSec: activePost.durationSec,
+              tags: activePost.tags,
+            });
+          }}
+          className={`pointer-events-auto w-10 h-10 rounded-full flex items-center justify-center backdrop-blur-md border border-white/12 bg-black/25 transition-colors duration-300 ${!activeHasAudio ? "opacity-30" : ""}`}
+          aria-label={!activeHasAudio ? "No audio" : isCurrentPlaying ? "Pause" : "Play"}
+          disabled={!activeHasAudio}
         >
           {isCurrentPlaying ? <Pause size={17} className="text-white" /> : <Play size={17} className="text-white ml-0.5" fill="white" />}
         </motion.button>
@@ -299,7 +335,7 @@ export default function ReelsBrowse() {
           </div>
           <div className="font-['Playfair_Display'] text-[20px] text-white/90 mb-2 italic">The reel room is still</div>
           <p className="text-[13px] font-['Inter'] text-white/45 leading-relaxed max-w-xs">
-            When short voices arrive, they will drift through here — calm, vertical, one breath at a time.
+            Reels live here — with or without sound — one calm frame at a time.
           </p>
           <button type="button" onClick={() => setLocation("/")} className="mt-8 text-[12px] font-['Inter'] tracking-[0.12em] uppercase text-[#C9A84C]/90 border border-[#C9A84C]/35 rounded-full px-6 py-2.5 transition-colors hover:bg-[#C9A84C]/10">
             Return home
@@ -310,10 +346,10 @@ export default function ReelsBrowse() {
       {!isLoading && reels.length > 0 && (
         <div
           ref={containerRef}
-          className="h-[100dvh] overflow-y-auto overscroll-y-contain snap-y snap-mandatory no-scrollbar"
+          className="h-[100dvh] overflow-y-auto overscroll-y-contain snap-y snap-mandatory no-scrollbar scroll-smooth"
         >
           {reels.map((p, i) => (
-            <ReelSlide key={p.id} post={p} active={i === activeSafe} index={i} />
+            <ReelSlide key={p.id} post={p} active={i === activeSafe} index={i} hasAudio={Boolean(p.audioUrl)} />
           ))}
         </div>
       )}

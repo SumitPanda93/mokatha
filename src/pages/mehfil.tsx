@@ -17,6 +17,7 @@ import {
   usePublishedMehfilReplay,
 } from "@/lib/store";
 import { trackEvent } from "@/lib/analytics";
+import { logOpsEvent } from "@/lib/observability";
 import MehfilReplaySheet from "@/components/MehfilReplaySheet";
 import { toast } from "sonner";
 import {
@@ -102,6 +103,57 @@ function SpeakerActiveView({ muted, onToggleMute }: { muted: boolean; onToggleMu
         {muted ? "Tap to unmute" : "Host will end your turn when ready"}
       </div>
     </div>
+  );
+}
+
+/** Stage strip for guest speaker — queue is canonical; profile fills gaps before presence updates */
+function ActiveSpeakerStrip({
+  speakerUserId,
+  presenceRow,
+}: {
+  speakerUserId: string;
+  presenceRow?: PresencePayload;
+}) {
+  const { data: profile } = useUser(speakerUserId);
+  const displayName = presenceRow?.display_name ?? profile?.displayName ?? "Speaker";
+  const avatarUrl = presenceRow?.avatar_url ?? profile?.avatarUrl ?? "";
+
+  return (
+    <motion.div
+      layout
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -6 }}
+      transition={{ type: "spring", stiffness: 340, damping: 30 }}
+      className="mt-4 flex items-center gap-3 px-4 py-3.5 rounded-2xl relative overflow-hidden"
+      style={{
+        background: "linear-gradient(135deg, rgba(107,232,158,0.18), rgba(232,177,74,0.08))",
+        border: "1px solid rgba(107,232,158,0.42)",
+        boxShadow: "0 14px 44px rgba(0,0,0,0.38), 0 0 52px rgba(107,232,158,0.10)",
+      }}
+    >
+      <div className="absolute inset-0 pointer-events-none rounded-2xl opacity-45"
+        style={{ background: "radial-gradient(ellipse 80% 120% at 20% 50%, rgba(107,232,158,0.28), transparent 55%)" }} />
+      <div className="relative w-11 h-11 rounded-full overflow-hidden shrink-0 ring-2 ring-[#6BE89E]/45">
+        {avatarUrl
+          ? <img src={avatarUrl} alt="" className="w-full h-full object-cover" />
+          : <div className="w-full h-full flex items-center justify-center text-[13px]"
+              style={{ background: "rgba(107,232,158,0.2)", color: "#6BE89E" }}>
+              {displayName.charAt(0)}
+            </div>}
+        <div className="absolute inset-0 rounded-full border-2"
+          style={{ borderColor: "#6BE89E", animation: "speak-ring 1.8s ease-out infinite" }} />
+      </div>
+      <div className="relative flex-1 min-w-0">
+        <div className="text-[10px] font-['Inter'] font-semibold tracking-[0.22em] uppercase" style={{ color: "#B8FFD9" }}>
+          On stage
+        </div>
+        <div className="text-[15px] font-['Playfair_Display'] leading-tight truncate">{displayName}</div>
+      </div>
+      <div className="relative shrink-0">
+        <AudioBars active />
+      </div>
+    </motion.div>
   );
 }
 
@@ -215,6 +267,14 @@ export default function MehfilRoom() {
   const activeSpeakerPresence = activeSpeaker
     ? presence.find((p) => p.user_id === activeSpeaker.userId)
     : null;
+  /** Non-host voices in the room (for atmosphere — excludes host seat) */
+  const gatheredVoices = presence.filter((p) => p.role !== "host").length;
+  /** Avatars in the quiet circle — not host, not current stage speaker */
+  const benchListeners = presence.filter((p) => {
+    if (p.role === "host" || p.role === "speaker") return false;
+    if (activeSpeaker && p.user_id === activeSpeaker.userId) return false;
+    return true;
+  });
 
   // ── Derived audio connection state ────────────────────────────────────────
   const lkConnecting = isLiveKitConfigured() && joined && (
@@ -253,7 +313,10 @@ export default function MehfilRoom() {
         const ctrl = await connectToMehfil(id, me, wantPublish, {
           onConnectionStateChange: (state) => cbs.setLkConnState(state),
           onParticipantCountChange: () => {},
-          onError: (err) => console.error("[LiveKit] reconnect error", err),
+          onError: (err) => {
+            console.error("[LiveKit] reconnect error", err);
+            logOpsEvent("livekit_reconnect_failed", { mehfil_id: id, message: err.message });
+          },
           onAudioBlocked: () => cbs.setAudioBlocked(true),
           onReconnecting: () => toast("Reconnecting audio…", { duration: 1800 }),
           onReconnected: () => toast.success("Audio back online", { duration: 1600 }),
@@ -317,6 +380,30 @@ export default function MehfilRoom() {
     prevLkConnRef.current = lkConnState;
   }, [joined, lkConnState]);
 
+  // ── Extra audio prime after join (Safari / delayed subscriptions) ──
+  useEffect(() => {
+    if (!joined || !isLiveKitConfigured()) return;
+    const t = window.setTimeout(() => {
+      livekitRef.current?.enableAudio();
+      void livekitRef.current?.room.startAudio().catch(() => {});
+    }, 380);
+    return () => clearTimeout(t);
+  }, [joined]);
+
+  // ── Presence: keep role in sync when moving listener ↔ speaker (Supabase presence payload) ──
+  useEffect(() => {
+    const ch = channelRef.current;
+    if (!joined || !ch || !me || !myUser) return;
+    const presenceRole: PresencePayload["role"] =
+      isHost ? "host" : myEntry?.status === "speaking" ? "speaker" : "listener";
+    void ch.track({
+      user_id: me,
+      display_name: myUser.displayName,
+      avatar_url: myUser.avatarUrl ?? "",
+      role: presenceRole,
+    });
+  }, [joined, me, myUser, isHost, myEntry?.status]);
+
   // ── Listener: host ended Mehfil remotely ──
   useEffect(() => {
     if (!joined || !mehfil || mehfil.isLive || endedRef.current) return;
@@ -349,7 +436,7 @@ export default function MehfilRoom() {
 
     // ── LiveKit audio ─────────────────────────────────────────────────────────
     if (isLiveKitConfigured()) {
-      const canPublish = isHost;
+      const canPublish = isHost || myEntry?.status === "speaking";
       connectToMehfil(id, me, canPublish, {
         onConnectionStateChange: (state) => setLkConnState(state),
         onParticipantCountChange: (count) => {
@@ -357,6 +444,7 @@ export default function MehfilRoom() {
         },
         onError: (err) => {
           console.error("[LiveKit] error", err);
+          logOpsEvent("livekit_error", { mehfil_id: id, message: err.message });
           toast.error("Audio connection issue — retrying…", { duration: 3000 });
         },
         onAudioBlocked: () => {
@@ -372,12 +460,13 @@ export default function MehfilRoom() {
       }).then((room) => {
         if (room) {
           livekitRef.current = room;
-          lkPublishModeRef.current = isHost;
+          lkPublishModeRef.current = canPublish;
         }
       });
     }
 
-    const role: PresencePayload["role"] = isHost ? "host" : "listener";
+    const role: PresencePayload["role"] =
+      isHost ? "host" : myEntry?.status === "speaking" ? "speaker" : "listener";
     const channel = supabase.channel(`mehfil:${id}`, {
       config: { presence: { key: me } },
     });
@@ -832,58 +921,27 @@ export default function MehfilRoom() {
             <div className="text-[11px] font-['Inter'] flex items-center gap-1.5"
               style={{ color: "rgba(245,243,239,0.60)" }}>
               <span className="w-1.5 h-1.5 rounded-full" style={{ background: "#6BE89E" }} />
-              <span style={{ color: "#6BE89E", fontWeight: 600 }}>{listenerCount}</span> listening
+              <span style={{ color: "#6BE89E", fontWeight: 600 }}>{gatheredVoices}</span> gathered
             </div>
           </div>
         )}
 
-        {/* Active speaker (if different from host) */}
+        {/* Active speaker (if different from host) — queue-backed; presence may lag briefly */}
         <AnimatePresence mode="wait">
-          {activeSpeaker && activeSpeaker.userId !== mehfil.hostId && activeSpeakerPresence && (
-            <motion.div
+          {activeSpeaker && activeSpeaker.userId !== mehfil.hostId && (
+            <ActiveSpeakerStrip
               key={activeSpeaker.userId}
-              layout
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -6 }}
-              transition={{ type: "spring", stiffness: 320, damping: 28 }}
-              className="mt-4 flex items-center gap-3 px-4 py-3.5 rounded-2xl relative overflow-hidden"
-              style={{
-                background: "linear-gradient(135deg, rgba(107,232,158,0.16), rgba(232,177,74,0.06))",
-                border: "1px solid rgba(107,232,158,0.38)",
-                boxShadow: "0 14px 44px rgba(0,0,0,0.38), 0 0 48px rgba(107,232,158,0.08)",
-              }}
-            >
-              <div className="absolute inset-0 pointer-events-none rounded-2xl opacity-40"
-                style={{ background: "radial-gradient(ellipse 80% 120% at 20% 50%, rgba(107,232,158,0.25), transparent 55%)" }} />
-              <div className="relative w-11 h-11 rounded-full overflow-hidden shrink-0 ring-2 ring-[#6BE89E]/40">
-                {activeSpeakerPresence.avatar_url
-                  ? <img src={activeSpeakerPresence.avatar_url} alt="" className="w-full h-full object-cover" />
-                  : <div className="w-full h-full flex items-center justify-center text-[13px]"
-                      style={{ background: "rgba(107,232,158,0.2)", color: "#6BE89E" }}>
-                      {activeSpeakerPresence.display_name.charAt(0)}
-                    </div>}
-                <div className="absolute inset-0 rounded-full border-2"
-                  style={{ borderColor: "#6BE89E", animation: "speak-ring 1.8s ease-out infinite" }} />
-              </div>
-              <div className="relative flex-1 min-w-0">
-                <div className="text-[10px] font-['Inter'] font-semibold tracking-[0.2em] uppercase" style={{ color: "#B8FFD9" }}>
-                  On stage
-                </div>
-                <div className="text-[15px] font-['Playfair_Display'] leading-tight truncate">{activeSpeakerPresence.display_name}</div>
-              </div>
-              <div className="relative shrink-0">
-                <AudioBars active={true} />
-              </div>
-            </motion.div>
+              speakerUserId={activeSpeaker.userId}
+              presenceRow={activeSpeakerPresence ?? undefined}
+            />
           )}
         </AnimatePresence>
 
-        {/* Listener avatars */}
-        {presence.filter((p) => p.role === "listener").length > 0 && (
+        {/* Listener avatars — calm bench (no duplicate stage face) */}
+        {benchListeners.length > 0 && (
           <div className="mt-4 flex items-center gap-3">
-            <AvatarStack users={presence.filter((p) => p.role === "listener")} max={7} />
-            <span className="text-[10px]" style={{ color: "rgba(245,243,239,0.35)" }}>listening</span>
+            <AvatarStack users={benchListeners} max={7} />
+            <span className="text-[10px]" style={{ color: "rgba(245,243,239,0.35)" }}>in the circle</span>
           </div>
         )}
       </div>

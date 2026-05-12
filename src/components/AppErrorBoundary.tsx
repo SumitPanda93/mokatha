@@ -1,4 +1,5 @@
 import React from "react";
+import { logRuntimeError } from "@/lib/observability";
 
 type AppErrorBoundaryProps = {
   children: React.ReactNode;
@@ -21,6 +22,7 @@ export default class AppErrorBoundary extends React.Component<AppErrorBoundaryPr
   }
 
   componentDidCatch(error: unknown) {
+    logRuntimeError("react_render_boundary", error);
     // Keep this visible in console for debugging production crashes.
     console.error("AppErrorBoundary caught error:", error);
   }

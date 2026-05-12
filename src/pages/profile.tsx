@@ -105,7 +105,7 @@ export default function Profile() {
       )}
 
       {/* ── Hero ── */}
-      <div className="px-6 pt-6 pb-6 relative">
+      <div className="px-6 pt-8 pb-7 relative">
         {/* Ambient glow */}
         <div className="absolute top-0 right-4 w-[120px] h-[120px] rounded-full bg-ochre/15 blur-3xl pointer-events-none" />
 
@@ -126,7 +126,8 @@ export default function Profile() {
             <div className="font-['Playfair_Display'] text-[24px] text-foreground leading-tight truncate">
               {user.displayName}
             </div>
-            <div className="text-[11px] text-muted-foreground mt-0.5">@{user.handle}</div>
+            <div className="text-[10px] font-['Inter'] uppercase tracking-[0.18em] text-muted-foreground/80 mt-1">Creator</div>
+            <div className="text-[11px] text-muted-foreground mt-1">@{user.handle}</div>
             {user.location && (
               <div className="text-[10px] text-muted-foreground/70 mt-0.5 uppercase tracking-[0.1em]">{user.location}</div>
             )}
@@ -196,21 +197,21 @@ export default function Profile() {
 
         {/* Quick action cards — hidden in visitor view */}
         {!viewAs && (
-          <div className="grid grid-cols-3 gap-2 mb-4">
+          <div className="grid grid-cols-3 gap-2 mb-5">
             <Link href="/rewards"
-              className="flex flex-col items-center gap-1.5 py-3 rounded-xl border border-border bg-card hover:border-ochre/50 hover:bg-ochre/5 transition-colors">
+              className="flex flex-col items-center gap-1.5 py-3.5 rounded-xl border border-border/40 bg-card/80 hover:border-ochre/45 hover:bg-ochre/[0.04] transition-colors">
               <Zap size={15} className="text-ochre" />
               <div className="text-[13px] font-['Playfair_Display']">{ink?.points ?? 0}</div>
               <div className="text-[9px] text-muted-foreground uppercase tracking-wider">Ink pts</div>
             </Link>
             <Link href="/creator-plan"
-              className="flex flex-col items-center gap-1.5 py-3 rounded-xl border border-border bg-card hover:border-plum/50 hover:bg-plum/5 transition-colors">
+              className="flex flex-col items-center gap-1.5 py-3.5 rounded-xl border border-border/40 bg-card/80 hover:border-plum/45 hover:bg-plum/[0.04] transition-colors">
               <Star size={15} className="text-plum" />
               <div className="text-[13px] font-['Playfair_Display']">{plan?.enabled ? `₹${plan.priceMonthly}` : "—"}</div>
               <div className="text-[9px] text-muted-foreground uppercase tracking-wider">My plan</div>
             </Link>
             <Link href="/settings/account"
-              className="flex flex-col items-center gap-1.5 py-3 rounded-xl border border-border bg-card hover:border-sage/50 hover:bg-sage/5 transition-colors">
+              className="flex flex-col items-center gap-1.5 py-3.5 rounded-xl border border-border/40 bg-card/80 hover:border-sage/45 hover:bg-sage/[0.04] transition-colors">
               <BadgeCheck size={15} className="text-sage" />
               <div className="text-[13px] font-['Playfair_Display']">Edit</div>
               <div className="text-[9px] text-muted-foreground uppercase tracking-wider">Profile</div>

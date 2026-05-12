@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient, type QueryClient } from "@tansta
 import { toast } from "sonner";
 import { supabase } from "@/lib/supabase";
 import { getAuthUserId } from "@/lib/auth";
+import { logOpsEvent } from "@/lib/observability";
 
 export { supabase };
 
@@ -1988,7 +1989,15 @@ export function usePostsRealtime() {
           qcPostsRealtimeRef.current?.invalidateQueries({ queryKey: QK.posts });
           qcPostsRealtimeRef.current?.invalidateQueries({ queryKey: QK.trendingPosts });
         })
-        .subscribe();
+        .subscribe((status, err) => {
+          if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+            logOpsEvent("realtime_channel_issue", {
+              channel: "realtime:posts",
+              status,
+              message: err?.message ?? "",
+            });
+          }
+        });
     }
     return () => {
       postsRealtimeRefCount--;
@@ -2010,7 +2019,15 @@ export function useMehfilRealtime(mehfilId?: string) {
         qc.invalidateQueries({ queryKey: QK.mehfils });
         if (mehfilId) qc.invalidateQueries({ queryKey: QK.mehfil(mehfilId) });
       })
-      .subscribe();
+      .subscribe((status, err) => {
+        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+          logOpsEvent("realtime_channel_issue", {
+            channel: `realtime:mehfils:${mehfilId ?? "all"}`,
+            status,
+            message: err?.message ?? "",
+          });
+        }
+      });
     return () => { supabase.removeChannel(channel); };
   }, [qc, mehfilId]);
 }
@@ -2038,7 +2055,15 @@ export function useNotificationsRealtime() {
         .on("postgres_changes", { event: "INSERT", schema: "public", table: "notifications", filter: `recipient_id=eq.${me}` }, () => {
           qcNotifRealtimeRef.current?.invalidateQueries({ queryKey: QK.notifications });
         })
-        .subscribe();
+        .subscribe((status, err) => {
+          if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+            logOpsEvent("realtime_channel_issue", {
+              channel: "realtime:notifications",
+              status,
+              message: err?.message ?? "",
+            });
+          }
+        });
     }
     return () => {
       notifRealtimeRefCount--;
@@ -2445,7 +2470,15 @@ export function useMehfilQueueRealtime(mehfilId: string) {
         event: "*", schema: "public", table: "mehfil_queue",
         filter: `mehfil_id=eq.${mehfilId}`,
       }, () => { qc.invalidateQueries({ queryKey: ["mehfilQueue", mehfilId] }); })
-      .subscribe();
+      .subscribe((status, err) => {
+        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+          logOpsEvent("realtime_channel_issue", {
+            channel: `queue:${mehfilId}`,
+            status,
+            message: err?.message ?? "",
+          });
+        }
+      });
     return () => { supabase.removeChannel(channel); };
   }, [qc, mehfilId]);
 }
