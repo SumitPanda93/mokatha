@@ -122,7 +122,7 @@ export default function Landing({ onBrowse }: Props) {
         className="mx-8 mt-1 mb-10 text-center px-2"
       >
         <div
-          className="font-serif italic text-[17px] leading-[1.85] tracking-[0.03em] max-w-[min(20rem,92vw)] mx-auto"
+          className="font-serif not-italic text-[17px] leading-[1.85] tracking-[0.03em] max-w-[min(20rem,92vw)] mx-auto"
           style={{ color: "rgba(201,168,76,0.88)" }}
         >
           {HERO_QUOTE}
