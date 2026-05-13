@@ -1,6 +1,5 @@
 /**
- * Post-live Mehfil: studio replay is prepared server-side from the live session.
- * Host chooses visibility — no manual upload/record in-product.
+ * Post-live Mehfil — replay asset arrives via LiveKit egress webhook (no manual upload).
  */
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
@@ -13,6 +12,8 @@ import {
   publishMehfilReplay,
   deleteMehfilReplay,
   QK,
+  useMehfilReplayDraftRow,
+  useMehfilReplayDraftRealtime,
 } from "@/lib/store";
 import { trackEvent } from "@/lib/analytics";
 
@@ -24,17 +25,13 @@ type Props = {
 
 export default function MehfilReplaySheet({ mehfilId, defaultTitle, onClose }: Props) {
   const qc = useQueryClient();
-  const [phase, setPhase] = useState<"processing" | "choice">("processing");
+  const { data: draftRemote } = useMehfilReplayDraftRow(mehfilId, true);
+  useMehfilReplayDraftRealtime(mehfilId, true);
+
   const [title, setTitle] = useState(defaultTitle || "Gathering replay");
   const [isPrivate, setIsPrivate] = useState(false);
   const [replayId, setReplayId] = useState<string | null>(null);
-  const [pendingAudio, setPendingAudio] = useState(true);
   const [busy, setBusy] = useState(false);
-
-  useEffect(() => {
-    const t = window.setTimeout(() => setPhase("choice"), 1400);
-    return () => clearTimeout(t);
-  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -45,7 +42,6 @@ export default function MehfilReplaySheet({ mehfilId, defaultTitle, onClose }: P
         setReplayId(row.id);
         setTitle(row.title || defaultTitle);
         setIsPrivate(row.isPrivate);
-        setPendingAudio(!row.audioUrl?.trim());
       } catch {
         /* ignore */
       }
@@ -55,8 +51,25 @@ export default function MehfilReplaySheet({ mehfilId, defaultTitle, onClose }: P
     };
   }, [mehfilId, defaultTitle]);
 
+  useEffect(() => {
+    if (!draftRemote) return;
+    setReplayId(draftRemote.id);
+    setTitle(draftRemote.title || defaultTitle);
+    setIsPrivate(draftRemote.isPrivate);
+  }, [draftRemote, defaultTitle]);
+
+  const pipeline = draftRemote?.replayProcessingStatus ?? "pending";
+  const hasAsset = !!(draftRemote?.audioUrl?.trim() || draftRemote?.videoUrl?.trim());
+  const assetReady = hasAsset || pipeline === "ready";
+  const failed = pipeline === "failed";
+  const working =
+    !failed &&
+    !assetReady &&
+    (pipeline === "recording" || pipeline === "processing" || pipeline === "pending");
+
   const invalidateReplay = () => {
     qc.invalidateQueries({ queryKey: ["mehfilReplayPublished", mehfilId] });
+    qc.invalidateQueries({ queryKey: QK.mehfilReplayDraft(mehfilId) });
     qc.invalidateQueries({ queryKey: QK.posts });
     qc.invalidateQueries({ queryKey: QK.mehfil(mehfilId) });
     qc.invalidateQueries({ queryKey: QK.mehfils });
@@ -72,7 +85,6 @@ export default function MehfilReplaySheet({ mehfilId, defaultTitle, onClose }: P
         isPrivate,
       });
       setReplayId(row.id);
-      setPendingAudio(!row.audioUrl?.trim());
       invalidateReplay();
       trackEvent("mehfil_replay_prefs_saved", { mehfil_id: mehfilId });
       toast.success("Replay preferences saved");
@@ -86,7 +98,7 @@ export default function MehfilReplaySheet({ mehfilId, defaultTitle, onClose }: P
   const tryPublish = async () => {
     setBusy(true);
     try {
-      let rid = replayId;
+      let rid = replayId ?? draftRemote?.id ?? null;
       if (!rid) {
         const row = await upsertMehfilReplayDraft({
           mehfilId,
@@ -96,10 +108,9 @@ export default function MehfilReplaySheet({ mehfilId, defaultTitle, onClose }: P
         });
         rid = row.id;
         setReplayId(rid);
-        setPendingAudio(!row.audioUrl?.trim());
       }
-      if (pendingAudio) {
-        toast.message("Studio replay is still processing — check back soon or keep this gathering private.");
+      if (!assetReady) {
+        toast.message("Still preserving your gathering — publishing unlocks when the replay is ready.");
         return;
       }
       await publishMehfilReplay(rid);
@@ -110,7 +121,7 @@ export default function MehfilReplaySheet({ mehfilId, defaultTitle, onClose }: P
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "";
       if (msg === "replay_audio_pending") {
-        toast.message("Replay audio isn’t attached yet — saving stays private until processing completes.");
+        toast.message("Still preserving your gathering — try again in a moment.");
       } else {
         toast.error(msg || "Publish failed");
       }
@@ -120,14 +131,15 @@ export default function MehfilReplaySheet({ mehfilId, defaultTitle, onClose }: P
   };
 
   const removeReplay = async () => {
-    if (!replayId) {
+    const rid = replayId ?? draftRemote?.id;
+    if (!rid) {
       onClose();
       return;
     }
-    if (!confirm("Remove this replay draft?")) return;
+    if (!confirm("Discard this replay draft?")) return;
     setBusy(true);
     try {
-      await deleteMehfilReplay(replayId);
+      await deleteMehfilReplay(rid);
       setReplayId(null);
       invalidateReplay();
       trackEvent("mehfil_replay_deleted", { mehfil_id: mehfilId });
@@ -167,10 +179,10 @@ export default function MehfilReplaySheet({ mehfilId, defaultTitle, onClose }: P
               <Sparkles size={12} /> Gathering closed
             </div>
             <div className="font-['Playfair_Display'] text-[23px] mt-2 leading-tight" style={{ color: "#F5F3EF" }}>
-              Replay
+              Your replay
             </div>
             <p className="text-[12px] mt-2 font-['Inter'] leading-relaxed max-w-[300px]" style={{ color: "rgba(245,243,239,0.42)" }}>
-              Your live session is being finalized. Choose how this gathering appears once studio audio is attached — no upload needed here.
+              What unfolded here is being preserved automatically — choose how it appears once ready.
             </p>
           </div>
           <button type="button" onClick={busy ? undefined : onClose} className="w-9 h-9 rounded-full flex items-center justify-center shrink-0"
@@ -179,15 +191,52 @@ export default function MehfilReplaySheet({ mehfilId, defaultTitle, onClose }: P
           </button>
         </div>
 
-        {phase === "processing" ? (
-          <div className="py-14 flex flex-col items-center gap-5">
+        {failed ? (
+          <div className="space-y-6 pb-4">
+            <div className="px-4 py-5 rounded-2xl border border-rose-400/15 bg-rose-500/[0.06]">
+              <p className="font-['Playfair_Display'] text-[17px] mb-2" style={{ color: "#fecaca" }}>
+                We couldn&apos;t preserve this gathering.
+              </p>
+              <p className="text-[12px] font-['Inter'] leading-relaxed" style={{ color: "rgba(245,243,239,0.45)" }}>
+                The room reached us, but recording couldn&apos;t finish. Nothing went wrong on your voice — it&apos;s safe to try another Mehfil when you&apos;re ready.
+              </p>
+              {draftRemote?.recordingError ? (
+                <p className="text-[10px] mt-3 font-mono opacity-35">{draftRemote.recordingError}</p>
+              ) : null}
+            </div>
+            <div className="flex flex-col gap-2.5">
+              <motion.button type="button" whileTap={{ scale: 0.985 }} disabled={busy} onClick={() => void removeReplay()}
+                className="w-full py-3.5 rounded-full text-[14px] font-['Inter'] font-medium"
+                style={{ background: "rgba(245,243,239,0.08)", color: "#F5F3EF" }}>
+                Discard draft
+              </motion.button>
+              <button type="button" disabled={busy} onClick={onClose} className="w-full py-2.5 rounded-full text-[12px] font-['Inter']"
+                style={{ color: "rgba(245,243,239,0.38)" }}>
+                Done
+              </button>
+            </div>
+          </div>
+        ) : working ? (
+          <div className="py-12 flex flex-col items-center gap-5 pb-8">
             <motion.div
               className="w-12 h-12 rounded-full border-2 border-t-transparent"
               style={{ borderColor: "rgba(232,177,74,0.45)", borderTopColor: "transparent" }}
               animate={{ rotate: 360 }}
               transition={{ duration: 1.1, repeat: Infinity, ease: "linear" }}
             />
-            <p className="text-[13px] font-['Playfair_Display'] italic text-white/45 text-center">Stilling the room…</p>
+            <div className="text-center space-y-2 max-w-[280px]">
+              <p className="text-[15px] font-['Playfair_Display']" style={{ color: "rgba(245,243,239,0.88)" }}>
+                Processing the Mehfil…
+              </p>
+              <p className="text-[12px] font-['Inter'] leading-relaxed" style={{ color: "rgba(245,243,239,0.45)" }}>
+                Your gathering is being preserved. You can step away — we&apos;ll attach the replay quietly.
+              </p>
+            </div>
+            <button type="button" disabled={busy} onClick={() => void savePreferences()}
+              className="mt-2 px-8 py-3 rounded-full text-[12px] font-['Inter'] border border-white/[0.08] bg-white/[0.04]"
+              style={{ color: "rgba(245,243,239,0.55)" }}>
+              Save title & privacy while waiting
+            </button>
           </div>
         ) : (
           <>
@@ -203,17 +252,14 @@ export default function MehfilReplaySheet({ mehfilId, defaultTitle, onClose }: P
               </span>
             </label>
 
-            {pendingAudio ? (
-              <div className="mb-6 px-3 py-3 rounded-xl text-[11px] font-['Inter'] leading-relaxed border border-white/[0.07] bg-white/[0.04]"
-                style={{ color: "rgba(245,243,239,0.48)" }}>
-                Studio replay audio is processing. You can save preferences now; publish unlocks automatically when audio is ready.
-              </div>
-            ) : (
-              <div className="mb-6 px-3 py-3 rounded-xl text-[11px] font-['Inter'] border border-emerald-500/20 bg-emerald-500/[0.07]"
-                style={{ color: "rgba(167,243,208,0.85)" }}>
-                Replay audio is attached — you can publish to your feed.
-              </div>
-            )}
+            <div className={`mb-6 px-3 py-3 rounded-xl text-[11px] font-['Inter'] leading-relaxed border ${
+              assetReady ? "border-emerald-500/20 bg-emerald-500/[0.07]" : "border-white/[0.07] bg-white/[0.04]"
+            }`}
+              style={{ color: assetReady ? "rgba(167,243,208,0.85)" : "rgba(245,243,239,0.48)" }}>
+              {assetReady
+                ? "Replay is ready — publish when it feels right, or keep it close."
+                : "Still collecting the room recording…"}
+            </div>
 
             <div className="flex flex-col gap-2.5">
               <motion.button type="button" whileTap={{ scale: 0.985 }} disabled={busy}
@@ -227,14 +273,14 @@ export default function MehfilReplaySheet({ mehfilId, defaultTitle, onClose }: P
                 onClick={() => void tryPublish()}
                 className="w-full py-3.5 rounded-full text-[14px] font-['Inter'] font-semibold"
                 style={{
-                  background: pendingAudio ? "rgba(232,177,74,0.18)" : "linear-gradient(135deg,#E8B14A,#c07a3a)",
-                  color: pendingAudio ? "rgba(245,243,239,0.55)" : "#1A0F14",
+                  background: assetReady ? "linear-gradient(135deg,#E8B14A,#c07a3a)" : "rgba(232,177,74,0.18)",
+                  color: assetReady ? "#1A0F14" : "rgba(245,243,239,0.55)",
                   opacity: busy ? 0.65 : 1,
                 }}>
-                {pendingAudio ? "Publish when ready (waiting on audio)" : "Publish replay to feed"}
+                {assetReady ? "Publish replay to feed" : "Publish when ready"}
               </motion.button>
 
-              <button type="button" disabled={busy || !replayId} onClick={() => void removeReplay()}
+              <button type="button" disabled={busy || !(replayId ?? draftRemote?.id)} onClick={() => void removeReplay()}
                 className="w-full py-3 rounded-full text-[13px] font-['Inter']"
                 style={{ background: "transparent", color: "rgba(247,106,74,0.75)" }}>
                 Delete replay draft

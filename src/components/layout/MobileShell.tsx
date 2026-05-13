@@ -7,6 +7,7 @@ import {
 import { motion, AnimatePresence } from "framer-motion";
 import { useAudioPlayer } from "@/lib/audioContext";
 import { SHEET_SPRING } from "@/lib/motionTokens";
+import { useNotificationsRealtime } from "@/lib/store";
 
 const fmtTime = (s: number) =>
   `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
@@ -256,6 +257,7 @@ function CreateSheet({ onClose, navigate }: { onClose: () => void; navigate: (pa
 interface MobileShellProps { children: React.ReactNode }
 
 export default function MobileShell({ children }: MobileShellProps) {
+  useNotificationsRealtime();
   const [location, navigate] = useLocation();
   const [listeningMode, setListeningMode] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);

@@ -80,6 +80,8 @@ export type Mehfil = {
   isTicketed?: boolean;
   ticketPrice?: number;
   maxSpeakers?: number;
+  /** voice = audio-first; studio = host may publish camera (LiveKit video). */
+  sessionMode?: "voice" | "studio";
 };
 
 export type Tip = {
@@ -258,6 +260,7 @@ function mapComment(c: any): Comment {
 }
 
 function mapMehfil(m: any): Mehfil {
+  const mode = m.session_mode === "studio" ? "studio" : "voice";
   return {
     id: m.id,
     hostId: m.host_id,
@@ -274,6 +277,7 @@ function mapMehfil(m: any): Mehfil {
     isTicketed: m.is_ticketed ?? false,
     ticketPrice: m.ticket_price ?? 0,
     maxSpeakers: m.max_speakers ?? 3,
+    sessionMode: mode,
   };
 }
 
@@ -942,6 +946,71 @@ export async function leaveMehfil(id: string): Promise<void> {
   await supabase.from("mehfils").update({ listeners: Math.max(0, (data?.listeners ?? 1) - 1) }).eq("id", id);
 }
 
+/** Notify followers when host opens a live Mehfil (actor must be host — RLS). */
+export async function notifyFollowersMehfilLive(mehfilId: string): Promise<void> {
+  const me = getCurrentUserId();
+  if (!me) return;
+  const { data: mf } = await supabase.from("mehfils").select("host_id").eq("id", mehfilId).maybeSingle();
+  if (!mf || mf.host_id !== me) return;
+  const { data: prof } = await supabase.from("profiles").select("display_name,handle").eq("id", me).maybeSingle();
+  const name = (prof?.display_name || prof?.handle || "Someone").trim() || "Someone";
+  const { data: follows } = await supabase.from("follows").select("follower_id").eq("followee_id", me);
+  if (!follows?.length) return;
+  const body = `${name} just opened a Mehfil`;
+  const now = new Date().toISOString();
+  const rows = follows.map((f: { follower_id: string }) => ({
+    id: `n${uid()}`,
+    kind: "mehfil-start" as NotificationKind,
+    actor_id: me,
+    target_id: mehfilId,
+    recipient_id: f.follower_id,
+    body,
+    created_at: now,
+    read: false,
+  }));
+  const { error } = await supabase.from("notifications").insert(rows);
+  if (error) console.warn("[mk:notif] mehfil live bulk insert failed", error.message);
+}
+
+const FUNCTIONS_ORIGIN = import.meta.env.VITE_SUPABASE_URL as string;
+
+export async function startMehfilRecording(mehfilId: string): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    const res = await fetch(`${FUNCTIONS_ORIGIN}/functions/v1/mehfil-recording-start`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+      },
+      body: JSON.stringify({ mehfilId }),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return { ok: false, error: typeof json?.error === "string" ? json.error : `recording_start_${res.status}` };
+    }
+    return { ok: true };
+  } catch (e: unknown) {
+    return { ok: false, error: e instanceof Error ? e.message : "recording_start_failed" };
+  }
+}
+
+export async function stopMehfilRecording(mehfilId: string): Promise<void> {
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    await fetch(`${FUNCTIONS_ORIGIN}/functions/v1/mehfil-recording-stop`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+      },
+      body: JSON.stringify({ mehfilId }),
+    });
+  } catch (e: unknown) {
+    console.warn("[mk:recording] stop failed", e);
+  }
+}
+
 export async function startMehfil(id: string): Promise<void> {
   await supabase.from("mehfils").update({
     is_live: true,
@@ -982,6 +1051,7 @@ export async function createMehfil(payload: Omit<Mehfil, "id" | "listeners" | "i
     cover_url: payload.coverUrl,
     language: payload.language,
     tags: payload.tags ?? [],
+    session_mode: payload.sessionMode ?? "voice",
   };
   console.log("[mk:createMehfil] inserting", { row, authId });
   const { data, error } = await supabase.from("mehfils").insert(row).select().maybeSingle();
@@ -1035,8 +1105,9 @@ export type MehfilReplayRow = {
   id: string;
   mehfilId: string;
   hostId: string;
-  /** Present once studio / pipeline attaches replay audio */
+  /** Present once egress webhook attaches replay media */
   audioUrl?: string | null;
+  videoUrl?: string | null;
   title: string;
   coverUrl?: string;
   durationSec?: number;
@@ -1045,14 +1116,23 @@ export type MehfilReplayRow = {
   isPrivate: boolean;
   deleted: boolean;
   createdAt: string;
+  replayProcessingStatus: "pending" | "recording" | "processing" | "ready" | "failed";
+  recordingError?: string | null;
 };
 
 function mapMehfilReplayRow(r: Record<string, unknown>): MehfilReplayRow {
+  const st = r.replay_processing_status as string | undefined;
+  const allowed = ["pending", "recording", "processing", "ready", "failed"] as const;
+  let replayProcessingStatus: MehfilReplayRow["replayProcessingStatus"] = "pending";
+  if (st && (allowed as readonly string[]).includes(st)) {
+    replayProcessingStatus = st as MehfilReplayRow["replayProcessingStatus"];
+  }
   return {
     id: r.id as string,
     mehfilId: r.mehfil_id as string,
     hostId: r.host_id as string,
     audioUrl: (r.audio_url as string | null | undefined) ?? null,
+    videoUrl: (r.video_url as string | null | undefined) ?? null,
     title: (r.title as string) ?? "",
     coverUrl: (r.cover_url as string) ?? undefined,
     durationSec: (r.duration_sec as number) ?? undefined,
@@ -1061,6 +1141,8 @@ function mapMehfilReplayRow(r: Record<string, unknown>): MehfilReplayRow {
     isPrivate: Boolean(r.is_private),
     deleted: Boolean(r.deleted),
     createdAt: r.created_at as string,
+    replayProcessingStatus,
+    recordingError: (r.recording_error as string | null | undefined) ?? null,
   };
 }
 
@@ -1153,14 +1235,18 @@ export async function publishMehfilReplay(replayId: string): Promise<Post> {
   if (fetchErr || !r || r.host_id !== me) throw new Error("not_found");
   if (r.published && r.post_id) throw new Error("already_published");
   const audioUrl = r.audio_url as string | null;
-  if (!audioUrl || !String(audioUrl).trim()) throw new Error("replay_audio_pending");
+  const videoUrl = r.video_url as string | null;
+  const hasVideo = !!(videoUrl && String(videoUrl).trim());
+  const hasAudio = !!(audioUrl && String(audioUrl).trim());
+  if (!hasVideo && !hasAudio) throw new Error("replay_audio_pending");
 
   const post = await addPost({
-    kind: "voice",
+    kind: hasVideo ? "reel" : "voice",
     authorId: me,
     title: r.title || "Mehfil replay",
     body: "",
-    audioUrl,
+    audioUrl: hasVideo ? (audioUrl?.trim() || undefined) : audioUrl!.trim(),
+    videoUrl: hasVideo ? videoUrl!.trim() : undefined,
     coverUrl: r.cover_url ?? undefined,
     durationSec: r.duration_sec ?? undefined,
     language: "or",
@@ -1194,6 +1280,46 @@ export function usePublishedMehfilReplay(mehfilId: string) {
     enabled: !!mehfilId,
     staleTime: 15_000,
   });
+}
+
+export function useMehfilReplayDraftRow(mehfilId: string, enabled: boolean) {
+  return useQuery({
+    queryKey: QK.mehfilReplayDraft(mehfilId),
+    queryFn: () => getMehfilReplayDraft(mehfilId),
+    enabled: !!mehfilId && enabled,
+    staleTime: 2500,
+  });
+}
+
+export function useMehfilReplayDraftRealtime(mehfilId: string, enabled: boolean) {
+  const qc = useQueryClient();
+  useEffect(() => {
+    if (!enabled || !mehfilId) return;
+    const channel = supabase
+      .channel(`realtime:mehfil_replay:${mehfilId}`)
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "mehfil_replays", filter: `mehfil_id=eq.${mehfilId}` },
+        () => qc.invalidateQueries({ queryKey: QK.mehfilReplayDraft(mehfilId) }),
+      )
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "mehfil_replays", filter: `mehfil_id=eq.${mehfilId}` },
+        () => qc.invalidateQueries({ queryKey: QK.mehfilReplayDraft(mehfilId) }),
+      )
+      .subscribe((status, err) => {
+        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+          logOpsEvent("realtime_channel_issue", {
+            channel: `realtime:mehfil_replay:${mehfilId}`,
+            status,
+            message: err?.message ?? "",
+          });
+        }
+      });
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [qc, mehfilId, enabled]);
 }
 
 export async function updateUser(userId: string, patch: Partial<User>): Promise<void> {
@@ -1653,6 +1779,7 @@ export const QK = {
   subscribersOf: (authorId: string) => ["subscribersOf", authorId] as const,
   inkReward: (userId: string) => ["inkReward", userId] as const,
   topReaders: ["topReaders"] as const,
+  mehfilReplayDraft: (mehfilId: string) => ["mehfilReplayDraft", mehfilId] as const,
 };
 
 // ─── React Query hooks ────────────────────────────────────────────────────────
@@ -1973,8 +2100,14 @@ export function useRestoreMehfilFeedVisibility() {
 export function useStartMehfil() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (id: string) => startMehfil(id),
-    onSuccess: () => { qc.invalidateQueries(); toast.success("Mehfil started"); },
+    mutationFn: async (id: string) => {
+      await startMehfil(id);
+      await notifyFollowersMehfilLive(id);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries();
+      toast.success("Mehfil started");
+    },
   });
 }
 
@@ -2231,9 +2364,21 @@ export function useNotificationsRealtime() {
       notifRealtimeUserId = me;
       notifRealtimeChannel = supabase
         .channel("realtime:notifications")
-        .on("postgres_changes", { event: "INSERT", schema: "public", table: "notifications", filter: `recipient_id=eq.${me}` }, () => {
+        .on("postgres_changes", { event: "INSERT", schema: "public", table: "notifications", filter: `recipient_id=eq.${me}` }, (payload) => {
           qcNotifRealtimeRef.current?.invalidateQueries({ queryKey: QK.notifications });
           qcNotifRealtimeRef.current?.invalidateQueries({ queryKey: [...QK.notifications, "count"] });
+          const row = payload.new as { kind?: string; body?: string; target_id?: string };
+          if (row?.kind === "mehfil-start" && row.body && row.target_id) {
+            toast.message(row.body, {
+              duration: 7200,
+              action: {
+                label: "Open",
+                onClick: () => {
+                  window.location.assign(`/mehfil/${encodeURIComponent(row.target_id!)}`);
+                },
+              },
+            });
+          }
         })
         .subscribe((status, err) => {
           if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {

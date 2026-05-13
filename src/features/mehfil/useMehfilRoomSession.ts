@@ -16,7 +16,7 @@ import {
 } from "@/lib/store";
 import { trackEvent } from "@/lib/analytics";
 import { logOpsEvent } from "@/lib/observability";
-import { connectToMehfil, isLiveKitConfigured, type LiveKitRoom as LKRoom } from "@/lib/livekit";
+import { connectToMehfil, isLiveKitConfigured, type LiveKitRoom as LKRoom, type MehfilLiveKitOpts } from "@/lib/livekit";
 
 export type PresenceRole = "host" | "speaker" | "listener";
 
@@ -63,6 +63,7 @@ export function useMehfilRoomSession(
   const [hasTicket, setHasTicket] = useState(false);
   const [muted, setMuted] = useState(false);
   const [lkConnState, setLkConnState] = useState<ConnectionState | null>(null);
+  const lkConnected = lkConnState === ConnectionState.Connected;
   const [audioBlocked, setAudioBlocked] = useState(false);
   const [supportMoment, setSupportMoment] = useState<MehfilSupportBroadcast | null>(null);
 
@@ -93,6 +94,26 @@ export function useMehfilRoomSession(
   const sawLiveRef = useRef(false);
 
   const isHost = !!me && !!mehfil && me === mehfil.hostId;
+  const studio = mehfil?.sessionMode === "studio";
+
+  const liveKitOptsFor = useCallback(
+    (wantPublish: boolean): MehfilLiveKitOpts => ({
+      publishCamera: Boolean(studio && wantPublish && isHost),
+      remoteHostIdentity:
+        studio && me && mehfil?.hostId && me !== mehfil.hostId ? mehfil.hostId : null,
+    }),
+    [studio, isHost, me, mehfil?.hostId],
+  );
+
+  const [hostCameraOn, setHostCameraOn] = useState(false);
+  useEffect(() => {
+    setHostCameraOn(Boolean(studio && isHost));
+  }, [studio, isHost]);
+
+  const bindLiveKitVideo = useCallback((local: HTMLElement | null, remote: HTMLElement | null) => {
+    livekitRef.current?.bindVideoElements({ local, remote });
+  }, []);
+
   const myEntry = queue.find((q) => q.userId === me);
   const activeSpeaker = queue.find((q) => q.status === "speaking");
   const pendingQueue = queue.filter((q) => q.status === "pending");
@@ -148,7 +169,7 @@ export function useMehfilRoomSession(
           onAudioBlocked: () => cbs.setAudioBlocked(true),
           onReconnecting: () => toast("Reconnecting audio…", { duration: 1700 }),
           onReconnected: () => toast.success("Audio restored", { duration: 1500 }),
-        });
+        }, liveKitOptsFor(wantPublish));
         if (cancelled || !ctrl) return;
         livekitRef.current = ctrl;
         lkPublishModeRef.current = wantPublish;
@@ -162,6 +183,9 @@ export function useMehfilRoomSession(
           await ctrl.setMicEnabled(false);
           setMuted(true);
         }
+        if (studio && isHost && wantPublish) {
+          await ctrl.setCameraEnabled(hostCameraOn);
+        }
       })();
     }, 240);
 
@@ -172,9 +196,13 @@ export function useMehfilRoomSession(
         lkReconnectScheduledRef.current = null;
       }
     };
-  }, [joined, isHost, myEntry?.status, mehfilId, me]);
+  }, [joined, isHost, myEntry?.status, mehfilId, me, studio, liveKitOptsFor, hostCameraOn]);
 
-  const lkConnected = lkConnState === ConnectionState.Connected;
+  useEffect(() => {
+    if (!joined || !lkConnected || !livekitRef.current || !studio || !isHost) return;
+    void livekitRef.current.setCameraEnabled(hostCameraOn);
+  }, [joined, lkConnected, studio, isHost, hostCameraOn]);
+
 
   useEffect(() => {
     if (!joined || !lkConnected || !livekitRef.current || !canPublishNow) return;
@@ -333,7 +361,7 @@ export function useMehfilRoomSession(
         onAudioBlocked: () => setAudioBlocked(true),
         onReconnecting: () => toast("Reconnecting audio…", { duration: 1900 }),
         onReconnected: () => toast.success("Audio reconnected", { duration: 1600 }),
-      }).then((room) => {
+      }, liveKitOptsFor(canPublish)).then((room) => {
         if (room) {
           livekitRef.current = room;
           lkPublishModeRef.current = canPublish;
@@ -415,7 +443,7 @@ export function useMehfilRoomSession(
       });
 
     channelRef.current = channel;
-  }, [me, myUser, mehfil, mehfilId, isHost, myEntry?.status, onMicrophoneEnabledChanged]);
+  }, [me, myUser, mehfil, mehfilId, isHost, myEntry?.status, onMicrophoneEnabledChanged, liveKitOptsFor]);
 
   const leaveRoom = useCallback(() => {
     setSupportMoment(null);
@@ -531,5 +559,9 @@ export function useMehfilRoomSession(
     teardown,
     supportMoment,
     broadcastRoomSupport,
+    studio,
+    hostCameraOn,
+    setHostCameraOn,
+    bindLiveKitVideo,
   };
 }

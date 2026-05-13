@@ -1,0 +1,4 @@
+# Supabase local/deploy overrides — safe defaults for webhook ingress without JWT.
+
+[functions.livekit-webhook]
+verify_jwt = false

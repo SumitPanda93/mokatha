@@ -55,6 +55,7 @@ export function PrepareMehfilForm() {
   const [description, setDescription] = useState("");
   const [language, setLanguage] = useState<"or" | "hi">("or");
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [sessionMode, setSessionMode] = useState<"voice" | "studio">("voice");
   const [startsNow, setStartsNow] = useState(true);
   const [startsAt, setStartsAt] = useState(() => {
     const d = new Date(Date.now() + 60 * 60 * 1000);
@@ -100,6 +101,7 @@ export function PrepareMehfilForm() {
       language,
       tags: selectedTags,
       startsAt: startsNow ? new Date().toISOString() : new Date(startsAt).toISOString(),
+      sessionMode,
     };
     create.mutate(payload, {
       onSuccess: (m) => {
@@ -293,6 +295,42 @@ export function PrepareMehfilForm() {
                 {descLen}/{ATMOSPHERE_MAX}
               </div>
             </div>
+          </section>
+
+          {/* Voice vs Studio */}
+          <section className="w-full max-w-[420px] space-y-2.5">
+            <div className="text-[10px] uppercase tracking-[0.28em] font-medium" style={{ color: GOLD_LABEL }}>
+              Gathering mode
+            </div>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setSessionMode("voice")}
+                className="flex-1 py-3 rounded-[18px] text-[12px] font-['Inter'] tracking-wide transition-colors border"
+                style={{
+                  borderColor: sessionMode === "voice" ? "rgba(212,184,120,0.45)" : "rgba(255,255,255,0.06)",
+                  background: sessionMode === "voice" ? "rgba(212,184,120,0.09)" : "rgba(255,255,255,0.03)",
+                  color: sessionMode === "voice" ? IVORY : "rgba(245,243,239,0.42)",
+                }}
+              >
+                Voice salon
+              </button>
+              <button
+                type="button"
+                onClick={() => setSessionMode("studio")}
+                className="flex-1 py-3 rounded-[18px] text-[12px] font-['Inter'] tracking-wide transition-colors border"
+                style={{
+                  borderColor: sessionMode === "studio" ? "rgba(212,184,120,0.45)" : "rgba(255,255,255,0.06)",
+                  background: sessionMode === "studio" ? "rgba(212,184,120,0.09)" : "rgba(255,255,255,0.03)",
+                  color: sessionMode === "studio" ? IVORY : "rgba(245,243,239,0.42)",
+                }}
+              >
+                Studio Mehfil
+              </button>
+            </div>
+            <p className="text-[11px] leading-relaxed font-['Inter']" style={{ color: "rgba(245,243,239,0.28)" }}>
+              Studio opens optional camera — voice stays intimate without video.
+            </p>
           </section>
 
           {/* Language */}
