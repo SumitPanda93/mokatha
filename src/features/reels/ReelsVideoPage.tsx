@@ -70,6 +70,29 @@ function ReelItem({
 
   const hasPts = (ink?.points ?? 0) >= 50;
 
+  const [videoSilent, setVideoSilent] = useState(false);
+
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v || !primaryVideo) {
+      setVideoSilent(false);
+      return;
+    }
+    const detect = () => {
+      type VT = HTMLVideoElement & { audioTracks?: { length: number }; mozHasAudio?: boolean };
+      const el = v as VT;
+      if (el.audioTracks && typeof el.audioTracks.length === "number") {
+        setVideoSilent(el.audioTracks.length === 0);
+      } else if (typeof el.mozHasAudio === "boolean") {
+        setVideoSilent(!el.mozHasAudio);
+      } else {
+        setVideoSilent(false);
+      }
+    };
+    v.addEventListener("loadedmetadata", detect);
+    return () => v.removeEventListener("loadedmetadata", detect);
+  }, [primaryVideo, post.id]);
+
   useEffect(() => {
     const v = videoRef.current;
     if (!v || !trim || !primaryVideo) return;
@@ -175,17 +198,20 @@ function ReelItem({
         }}
       />
 
-      <div className="absolute top-[max(env(safe-area-inset-top),12px)] right-4 z-40 flex flex-col gap-2 pointer-events-auto">
+      <div className="absolute top-[max(env(safe-area-inset-top),12px)] right-4 z-40 flex flex-col gap-1 items-end pointer-events-auto">
         <motion.button
           type="button"
           whileTap={{ scale: 0.92 }}
           onClick={onToggleMute}
-          disabled={locked && primaryVideo}
+          disabled={locked}
           className="w-11 h-11 rounded-full backdrop-blur-md bg-black/35 border border-white/15 flex items-center justify-center disabled:opacity-35"
           aria-label={muted ? "Unmute" : "Mute"}
         >
           {muted ? <VolumeX size={18} className="text-white" /> : <Volume2 size={18} className="text-white" />}
         </motion.button>
+        {primaryVideo && videoSilent && !locked && (
+          <span className="text-[8px] font-['Inter'] tracking-[0.24em] uppercase text-white/28 pr-1">visual</span>
+        )}
       </div>
 
       {locked && (

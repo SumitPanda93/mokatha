@@ -524,23 +524,24 @@ export default function Home() {
         ))}
       </div>
 
-      {/* ── Feed category tabs — editorial underline style ── */}
-      <div className="relative border-b border-border/40 mt-0.5">
-        <div className="flex overflow-x-auto no-scrollbar px-4">
+      {/* ── Feed category tabs — full-width editorial rhythm ── */}
+      <div className="relative border-b border-border/35 mt-1">
+        <div className="grid grid-cols-5 gap-0 px-3">
           {FILTERS.map((f) => (
             <button
               key={f}
+              type="button"
               onClick={() => setFilter(f)}
-              className={`relative shrink-0 px-3.5 py-3 text-[12px] font-['Inter'] transition-colors whitespace-nowrap select-none ${
-                filter === f ? "text-foreground font-medium" : "text-muted-foreground hover:text-foreground/80"
+              className={`relative py-3.5 text-center text-[11px] font-['Inter'] font-medium tracking-[0.06em] transition-colors select-none ${
+                filter === f ? "text-foreground" : "text-muted-foreground/85 hover:text-foreground/75"
               }`}
             >
-              {f}
+              <span className="block leading-tight px-0.5 truncate">{f}</span>
               {filter === f && (
                 <motion.div
                   layoutId="feed-tab-line"
-                  className="absolute bottom-0 left-2 right-2 h-[1.5px] rounded-full bg-terracotta"
-                  transition={{ type: "spring", stiffness: 400, damping: 30 }}
+                  className="absolute bottom-0 left-[14%] right-[14%] h-[2px] rounded-full bg-foreground/75"
+                  transition={{ type: "spring", stiffness: 420, damping: 34 }}
                 />
               )}
             </button>

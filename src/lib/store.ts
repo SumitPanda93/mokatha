@@ -75,6 +75,8 @@ export type Mehfil = {
   language: "or" | "hi";
   tags: string[];
   archived?: boolean;
+  /** When the live session ended (public discovery hides ~24h after this). */
+  endedAt?: string;
   isTicketed?: boolean;
   ticketPrice?: number;
   maxSpeakers?: number;
@@ -268,6 +270,7 @@ function mapMehfil(m: any): Mehfil {
     language: m.language ?? "or",
     tags: m.tags ?? [],
     archived: m.archived ?? false,
+    endedAt: m.ended_at ?? undefined,
     isTicketed: m.is_ticketed ?? false,
     ticketPrice: m.ticket_price ?? 0,
     maxSpeakers: m.max_speakers ?? 3,
@@ -507,8 +510,31 @@ export async function getPostComments(postId: string): Promise<Comment[]> {
   return (data ?? []).map(mapComment);
 }
 
+/** Public Mehfil surfaces hide ended sessions after this duration. */
+export const MEHFIL_DISCOVERY_TTL_MS = 24 * 60 * 60 * 1000;
+
+export function isMehfilDiscoveryExpired(m: Mehfil): boolean {
+  if (m.isLive || m.archived) return false;
+  if (!m.endedAt) return false;
+  return Date.now() - new Date(m.endedAt).getTime() > MEHFIL_DISCOVERY_TTL_MS;
+}
+
 export async function getMehfils(): Promise<Mehfil[]> {
-  const { data } = await supabase.from("mehfils").select("*").order("starts_at", { ascending: false });
+  const { data } = await supabase.from("mehfils").select("*").eq("archived", false).order("starts_at", { ascending: false });
+  const rows = data ?? [];
+  const cutoff = Date.now() - MEHFIL_DISCOVERY_TTL_MS;
+  const filtered = rows.filter((m: any) => {
+    if (m.is_live) return true;
+    if (!m.ended_at) return true;
+    return new Date(m.ended_at).getTime() >= cutoff;
+  });
+  return filtered.map(mapMehfil);
+}
+
+/** Full history for host profile (includes discovery-expired rows). */
+export async function getMehfilsForHost(hostId: string): Promise<Mehfil[]> {
+  if (!hostId) return [];
+  const { data } = await supabase.from("mehfils").select("*").eq("host_id", hostId).order("starts_at", { ascending: false });
   return (data ?? []).map(mapMehfil);
 }
 
@@ -917,11 +943,28 @@ export async function leaveMehfil(id: string): Promise<void> {
 }
 
 export async function startMehfil(id: string): Promise<void> {
-  await supabase.from("mehfils").update({ is_live: true, starts_at: new Date().toISOString() }).eq("id", id);
+  await supabase.from("mehfils").update({
+    is_live: true,
+    starts_at: new Date().toISOString(),
+    ended_at: null,
+  } as Record<string, unknown>).eq("id", id);
 }
 
 export async function endMehfil(id: string): Promise<void> {
-  await supabase.from("mehfils").update({ is_live: false, listeners: 0 }).eq("id", id);
+  const now = new Date().toISOString();
+  await supabase.from("mehfils").update({ is_live: false, listeners: 0, ended_at: now }).eq("id", id);
+}
+
+/** Host-only: bumps discovery window so this gathering appears on public lists again (~24h). */
+export async function restoreMehfilFeedVisibility(id: string): Promise<void> {
+  const me = getCurrentUserId();
+  if (!me) throw new Error("not_authenticated");
+  const { data: row } = await supabase.from("mehfils").select("host_id").eq("id", id).maybeSingle();
+  if (row?.host_id !== me) throw new Error("only_host");
+  await supabase.from("mehfils").update({
+    ended_at: new Date().toISOString(),
+    archived: false,
+  } as Record<string, unknown>).eq("id", id);
 }
 
 export async function createMehfil(payload: Omit<Mehfil, "id" | "listeners" | "isLive">): Promise<Mehfil> {
@@ -1540,6 +1583,7 @@ export const QK = {
   userByHandle: (h: string) => ["userByHandle", h] as const,
   postsByAuthor: (id: string) => ["postsByAuthor", id] as const,
   mehfils: ["mehfils"] as const,
+  mehfilsByHost: (hostId: string) => ["mehfilsByHost", hostId] as const,
   mehfil: (id: string) => ["mehfil", id] as const,
   transactions: (userId: string) => ["transactions", userId] as const,
   notifications: ["notifications"] as const,
@@ -1574,6 +1618,13 @@ export const useUser = (id: string) => useQ(QK.user(id), () => getUser(id));
 export const useUserByHandle = (h: string) => useQ(QK.userByHandle(h), () => getUserByHandle(h));
 export const usePostsByAuthor = (id: string) => useQ(QK.postsByAuthor(id), () => getPostsByAuthor(id));
 export const useMehfils = () => useQ(QK.mehfils, getMehfils);
+export const useMehfilsForHost = (hostId: string) =>
+  useQuery({
+    queryKey: QK.mehfilsByHost(hostId),
+    queryFn: () => getMehfilsForHost(hostId),
+    enabled: !!hostId,
+    staleTime: 30_000,
+  });
 export const useMehfil = (id: string) => useQ(QK.mehfil(id), () => getMehfil(id));
 
 /** Aggressive Mehfil row refresh while inside the room (same cache key as {@link useMehfil}). */
@@ -1835,7 +1886,7 @@ export function useDeleteMehfil() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (id: string) => deleteMehfil(id),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["mehfils"] }); toast.success("Mehfil deleted"); },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: QK.mehfils }); qc.invalidateQueries({ predicate: (q) => q.queryKey[0] === "mehfilsByHost" }); toast.success("Mehfil deleted"); },
     onError: (e: Error) => toast.error(e.message),
   });
 }
@@ -1844,8 +1895,25 @@ export function useArchiveMehfil() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({ id, archived }: { id: string; archived: boolean }) => archiveMehfil(id, archived),
-    onSuccess: (_d, v) => { qc.invalidateQueries({ queryKey: ["mehfils"] }); toast.success(v.archived ? "Mehfil archived" : "Mehfil restored"); },
+    onSuccess: (_d, v) => {
+      qc.invalidateQueries({ queryKey: QK.mehfils });
+      qc.invalidateQueries({ predicate: (q) => q.queryKey[0] === "mehfilsByHost" });
+      toast.success(v.archived ? "Mehfil archived" : "Mehfil restored");
+    },
     onError: (e: Error) => toast.error(e.message),
+  });
+}
+
+export function useRestoreMehfilFeedVisibility() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => restoreMehfilFeedVisibility(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: QK.mehfils });
+      qc.invalidateQueries({ predicate: (q) => q.queryKey[0] === "mehfilsByHost" });
+      toast.success("Back on the Mehfil feed for 24 hours");
+    },
+    onError: (e: Error) => toast.error(e.message === "only_host" ? "Only the host can update this" : e.message),
   });
 }
 
@@ -1886,7 +1954,11 @@ export function useCreateMehfil() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (payload: Omit<Mehfil, "id" | "listeners" | "isLive">) => createMehfil(payload),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: QK.mehfils }); toast.success("Mehfil created!"); },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: QK.mehfils });
+      qc.invalidateQueries({ predicate: (q) => q.queryKey[0] === "mehfilsByHost" });
+      toast.success("Mehfil created!");
+    },
     onError: (e: Error) => { toast.error(`Could not create mehfil: ${e.message}`); },
   });
 }

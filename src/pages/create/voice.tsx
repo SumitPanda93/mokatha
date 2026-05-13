@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type MouseEvent } from "react";
 import { useLocation } from "wouter";
 import { motion } from "framer-motion";
 import { ArrowLeft, Mic, Square, Pause, Play, Trash2, Loader2, ImagePlus, X } from "lucide-react";
@@ -24,6 +24,91 @@ async function uploadCoverImage(userId: string, file: File): Promise<string> {
   return data.publicUrl;
 }
 
+function VoiceTakePreview({ audioUrl, durationSec }: { audioUrl: string; durationSec: number }) {
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const [playing, setPlaying] = useState(false);
+  const [current, setCurrent] = useState(0);
+  const [dur, setDur] = useState(Math.max(0.1, durationSec || 0.1));
+
+  useEffect(() => {
+    const a = audioRef.current;
+    if (!a) return;
+    const onMeta = () => {
+      if (Number.isFinite(a.duration) && a.duration > 0) setDur(a.duration);
+    };
+    const onTime = () => setCurrent(a.currentTime);
+    const onPlay = () => setPlaying(true);
+    const onPause = () => setPlaying(false);
+    a.addEventListener("loadedmetadata", onMeta);
+    a.addEventListener("timeupdate", onTime);
+    a.addEventListener("play", onPlay);
+    a.addEventListener("pause", onPause);
+    return () => {
+      a.removeEventListener("loadedmetadata", onMeta);
+      a.removeEventListener("timeupdate", onTime);
+      a.removeEventListener("play", onPlay);
+      a.removeEventListener("pause", onPause);
+    };
+  }, [audioUrl]);
+
+  useEffect(() => {
+    const a = audioRef.current;
+    if (!a) return;
+    a.pause();
+    a.currentTime = 0;
+    setPlaying(false);
+    setCurrent(0);
+  }, [audioUrl]);
+
+  const pct = dur > 0 ? (current / dur) * 100 : 0;
+  const fmt = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+
+  const toggle = () => {
+    const a = audioRef.current;
+    if (!a) return;
+    if (a.paused) void a.play().catch(() => {});
+    else a.pause();
+  };
+
+  const seek = (e: MouseEvent<HTMLDivElement>) => {
+    const a = audioRef.current;
+    if (!a || !dur) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const p = (e.clientX - rect.left) / rect.width;
+    a.currentTime = Math.max(0, Math.min(dur - 0.05, p * dur));
+  };
+
+  return (
+    <div className="rounded-2xl border border-border/55 bg-card/85 backdrop-blur-[2px] p-4 mt-5 mx-6">
+      <audio ref={audioRef} src={audioUrl} preload="metadata" />
+      <div className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground mb-3 font-['Inter']">Listen before publish</div>
+      <div className="flex items-center gap-3">
+        <button type="button" onClick={toggle} className="w-12 h-12 rounded-full bg-foreground text-background flex items-center justify-center shrink-0 active:scale-95 transition-transform">
+          {playing ? <Pause size={18} /> : <Play size={18} className="ml-0.5" />}
+        </button>
+        <div className="flex-1 min-w-0">
+          <div className="h-8 flex items-end gap-[2px] mb-2">
+            {Array.from({ length: 36 }).map((_, i) => (
+              <span
+                key={i}
+                className="flex-1 max-w-[3px] rounded-full bg-foreground/22"
+                style={{ height: `${24 + ((i * 13) % 62)}%`, opacity: playing ? 1 : 0.5 }}
+              />
+            ))}
+          </div>
+          <div className="h-[3px] rounded-full bg-border overflow-hidden cursor-pointer active:opacity-90" onClick={seek} role="slider" aria-valuenow={Math.round(pct)} aria-valuemin={0} aria-valuemax={100}>
+            <div className="h-full rounded-full bg-foreground/50 transition-[width] duration-150" style={{ width: `${pct}%` }} />
+          </div>
+          <div className="flex justify-between text-[10px] text-muted-foreground mt-1.5 font-['Inter'] tabular-nums">
+            <span>{fmt(current)}</span>
+            <span>{fmt(dur)}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function CreateVoice() {
   useTitle("Record voice");
   const [, setLocation] = useLocation();
@@ -39,6 +124,8 @@ export default function CreateVoice() {
   const [uploading, setUploading]   = useState(false);
   const [uploadingCover, setUploadingCover] = useState(false);
   const add = useAddPost();
+
+  const selectedTake = takes.find((t) => t.selected) ?? takes[0];
 
   const mediaRef  = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -224,6 +311,10 @@ export default function CreateVoice() {
             ))}
           </div>
         </div>
+      )}
+
+      {selectedTake && (
+        <VoiceTakePreview audioUrl={selectedTake.audioUrl} durationSec={selectedTake.durationSec} />
       )}
 
       {/* Meta */}

@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { Link, useParams, useLocation } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowLeft, MoreHorizontal, Heart, MessageCircle, Play, Check, Star, X, Mic, FileText, BookOpen, Clapperboard, Mail } from "lucide-react";
+import { ArrowLeft, Share2, Heart, MessageCircle, Play, Check, Star, X, Mic, FileText, BookOpen, Clapperboard, Mail } from "lucide-react";
 import { useTitle } from "@/hooks/useTitle";
 import {
   useUserByHandle, useFollow, usePostsByAuthor, useIsFollowing, getCurrentUserId,
@@ -11,6 +11,8 @@ import {
 } from "@/lib/store";
 import SupportSheet from "@/components/SupportSheet";
 import AudioLetterRecorder from "@/components/AudioLetterRecorder";
+import { ProfileShareSheet } from "@/components/ProfileShareSheet";
+import { ProfileGatheringsSection } from "@/components/ProfileGatheringsSection";
 import { trackEvent } from "@/lib/analytics";
 
 // ─── Kind gradient fallback ───────────────────────────────────────────────────
@@ -122,6 +124,7 @@ export default function UserProfile() {
   const [msgLoading, setMsgLoading] = useState(false);
   const [supportOpen, setSupportOpen] = useState(false);
   const [audioLetterOpen, setAudioLetterOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
   const follow = useFollow();
   const subscribe = useSubscribeToAuthor();
   const unsubscribe = useUnsubscribeFromAuthor();
@@ -146,6 +149,8 @@ export default function UserProfile() {
 
   const isMe = me === user.id;
 
+  const shareUrl = typeof window !== "undefined" ? `${window.location.origin}/u/${user.handle}` : "";
+
   // Pick the most prominent recent post for the featured card
   const featuredPost = posts.find((p) => p.kind === "voice" || p.kind === "story") ?? posts[0];
   const gridPosts = posts.filter((p) => p !== featuredPost);
@@ -163,8 +168,13 @@ export default function UserProfile() {
           <ArrowLeft size={16} />
         </button>
         <div className="text-[11px] uppercase tracking-[0.2em] text-muted-foreground">@{user.handle}</div>
-        <button className="w-9 h-9 rounded-full border border-border flex items-center justify-center">
-          <MoreHorizontal size={16} />
+        <button
+          type="button"
+          onClick={() => setShareOpen(true)}
+          className="w-9 h-9 rounded-full border border-border flex items-center justify-center hover:bg-muted/40 transition-colors"
+          aria-label="Share profile"
+        >
+          <Share2 size={16} strokeWidth={1.6} />
         </button>
       </div>
 
@@ -296,6 +306,8 @@ export default function UserProfile() {
         )}
       </div>
 
+      <ProfileGatheringsSection hostId={user.id} forVisitor={!isMe} />
+
       {/* ── Featured post ── */}
       {featuredPost && (
         <div className="px-5 mt-7">
@@ -423,6 +435,15 @@ export default function UserProfile() {
           />
         )}
       </AnimatePresence>
+
+      <ProfileShareSheet
+        open={shareOpen}
+        onClose={() => setShareOpen(false)}
+        profileUrl={shareUrl}
+        displayName={user.displayName}
+        handle={user.handle}
+        avatarUrl={user.avatarUrl}
+      />
     </div>
   );
 }

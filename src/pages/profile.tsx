@@ -8,6 +8,8 @@ import {
   useFollowers, useFollowing, usePostsRealtime,
 } from "@/lib/store";
 import { useAuthState } from "@/lib/auth";
+import { ProfileShareSheet } from "@/components/ProfileShareSheet";
+import { ProfileGatheringsSection } from "@/components/ProfileGatheringsSection";
 
 const BADGE_LABELS: Record<string, string> = {
   "supporter": "💛 Supporter",
@@ -31,7 +33,10 @@ export default function Profile() {
   const { data: followingData = [] } = useFollowing(meId);
   const [tab, setTab] = useState<"posts" | "saved">("posts");
   const [viewAs, setViewAs] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
   usePostsRealtime();
+
+  const shareUrl = typeof window !== "undefined" && user?.handle ? `${window.location.origin}/u/${user.handle}` : "";
 
   // Still resolving auth — show spinner to avoid flash
   if (!ready) {
@@ -229,12 +234,17 @@ export default function Profile() {
             </Link>
           )}
           <button
-            onClick={() => navigator.clipboard?.writeText(window.location.origin + `/u/${user.handle}`)}
-            className="w-10 h-10 rounded-full border border-border flex items-center justify-center hover:bg-muted/40 transition-colors">
+            type="button"
+            onClick={() => setShareOpen(true)}
+            className="w-10 h-10 rounded-full border border-border flex items-center justify-center hover:bg-muted/40 transition-colors"
+            aria-label="Share profile"
+          >
             <Share2 size={14} />
           </button>
         </div>
       </div>
+
+      {!viewAs && <ProfileGatheringsSection hostId={meId} />}
 
       {/* Tabs — only show "saved" when not in visitor view */}
       <div className="border-t border-border px-6 flex gap-6">
@@ -262,6 +272,15 @@ export default function Profile() {
           </div>
         )}
       </div>
+
+      <ProfileShareSheet
+        open={shareOpen}
+        onClose={() => setShareOpen(false)}
+        profileUrl={shareUrl}
+        displayName={user.displayName}
+        handle={user.handle}
+        avatarUrl={user.avatarUrl}
+      />
     </div>
   );
 }

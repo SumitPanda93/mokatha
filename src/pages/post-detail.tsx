@@ -272,6 +272,12 @@ export default function PostDetail() {
 
   const isAudio = post.kind === "voice" || post.kind === "reel";
   const isText = post.kind === "text" || post.kind === "story";
+  const showInlineAudioChrome =
+    !locked &&
+    (
+      (post.kind === "voice" && !!post.audioUrl) ||
+      (post.kind === "reel" && !!post.audioUrl && !post.videoUrl)
+    );
   const related = feed.filter((p) => p.id !== post.id && p.tags.some((t) => post.tags.includes(t))).slice(0, 3);
 
   const ACCESS_BADGE: Record<string, { label: string; cls: string }> = {
@@ -412,38 +418,32 @@ export default function PostDetail() {
         </div>
       )}
 
-      {/* ── Audio player (voice / reel) ── */}
-      {isAudio && !locked && (
-        <div className="mx-5 mt-5 rounded-2xl border border-border bg-card p-4">
+      {/* ── Audio player (voice / legacy audio reels only — video reels stay cinematic) ── */}
+      {showInlineAudioChrome && (
+        <div className="mx-5 mt-5 rounded-2xl border border-border/55 bg-card/90 backdrop-blur-[2px] p-4">
           <div className="flex items-center gap-3">
-            <button onClick={toggleAudio} disabled={!post.audioUrl}
-              className="w-11 h-11 rounded-full bg-foreground text-background flex items-center justify-center disabled:opacity-40 active:scale-90 transition-transform">
+            <button type="button" onClick={toggleAudio}
+              className="w-11 h-11 rounded-full bg-foreground text-background flex items-center justify-center active:scale-90 transition-transform">
               {playing ? <Pause size={16} /> : <Play size={16} className="ml-0.5" />}
             </button>
             <div className="flex-1">
-              {post.audioUrl ? (
-                <>
-                  <div className="flex items-end gap-[2px] h-7">
-                    {Array.from({ length: 36 }).map((_, i) => (
-                      <span key={i} className="w-[3px] bg-terracotta rounded-sm"
-                        style={{ height: `${20 + ((i * 17) % 80)}%`, animation: playing ? `pd-bar 1.${(i % 9) + 2}s ease-in-out infinite` : "none" }} />
-                    ))}
-                  </div>
-                  <div className="mt-2 h-1 rounded-full bg-border overflow-hidden cursor-pointer"
-                    onClick={(e) => {
-                      const rect = e.currentTarget.getBoundingClientRect();
-                      audioPlayer.seek(((e.clientX - rect.left) / rect.width) * 100);
-                    }}>
-                    <div className="h-full bg-terracotta rounded-full" style={{ width: `${progressPct}%` }} />
-                  </div>
-                  <div className="flex justify-between text-[10px] text-muted-foreground mt-1">
-                    <span>{fmt(currentTime)}</span>
-                    <span>{fmt(isCurrentTrack ? audioPlayer.duration : post.durationSec)}</span>
-                  </div>
-                </>
-              ) : (
-                <div className="text-[12px] text-muted-foreground italic">No audio available</div>
-              )}
+              <div className="flex items-end gap-[2px] h-7">
+                {Array.from({ length: 36 }).map((_, i) => (
+                  <span key={i} className="w-[3px] bg-terracotta rounded-sm"
+                    style={{ height: `${20 + ((i * 17) % 80)}%`, animation: playing ? `pd-bar 1.${(i % 9) + 2}s ease-in-out infinite` : "none" }} />
+                ))}
+              </div>
+              <div className="mt-2 h-1 rounded-full bg-border overflow-hidden cursor-pointer"
+                onClick={(e) => {
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  audioPlayer.seek(((e.clientX - rect.left) / rect.width) * 100);
+                }}>
+                <div className="h-full bg-terracotta rounded-full" style={{ width: `${progressPct}%` }} />
+              </div>
+              <div className="flex justify-between text-[10px] text-muted-foreground mt-1">
+                <span>{fmt(currentTime)}</span>
+                <span>{fmt(isCurrentTrack ? audioPlayer.duration : post.durationSec)}</span>
+              </div>
             </div>
           </div>
         </div>
