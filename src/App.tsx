@@ -228,6 +228,7 @@ function Router() {
             <Route path="/wallet/transactions" component={WalletTxRoute} />
             <Route path="/wallet/withdraw" component={WithdrawRoute} />
             <Route path="/wallet/earnings" component={CreatorEarningsRoute} />
+            <Route path="/creator-earnings" component={CreatorEarningsRoute} />
             <Route path="/payment-result" component={PaymentResult} />
 
             {/* Settings */}

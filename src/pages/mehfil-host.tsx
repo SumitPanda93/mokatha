@@ -180,7 +180,15 @@ function MehfilHostRoom({ id }: { id: string }) {
   }
 
   const fmt = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
-  const endLive = () => { end.mutate(id); setLocation("/mehfil"); };
+  const endLive = () => {
+    end.mutate(id, {
+      onSuccess: () => {
+        toast.success("Mehfil ended");
+        setLocation("/mehfil");
+      },
+      onError: (err: Error) => toast.error(err.message || "Could not end session"),
+    });
+  };
 
   return (
     <div className="min-h-screen w-full text-white" style={{ background: "linear-gradient(180deg, #1A0F14 0%, #2A1018 60%, #0E0810 100%)" }}>

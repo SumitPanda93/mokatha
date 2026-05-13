@@ -3,7 +3,7 @@ import { Link } from "wouter";
 import { Radio, Mic, Plus, Users, Clock, MoreVertical, Trash2, Archive, ArchiveRestore, Ticket } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useTitle } from "@/hooks/useTitle";
-import { useMehfils, useUser, useDeleteMehfil, useArchiveMehfil, getCurrentUserId } from "@/lib/store";
+import { useMehfils, useUser, useDeleteMehfil, useArchiveMehfil, useMehfilRealtime, getCurrentUserId } from "@/lib/store";
 
 // ─── Creator menu ─────────────────────────────────────────────────────────────
 
@@ -148,6 +148,7 @@ function MehfilCard({ m, index }: { m: any; index: number }) {
 
 export default function MehfilList() {
   useTitle("Mehfil");
+  useMehfilRealtime();
   const { data: mehfils = [] } = useMehfils();
   const [tab, setTab] = useState<"all" | "live" | "upcoming">("all");
 

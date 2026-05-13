@@ -17,6 +17,7 @@ import {
   RemoteTrackPublication,
   ConnectionState,
   RoomOptions,
+  ParticipantEvent,
 } from "livekit-client";
 import { supabase } from "./supabase";
 import { logOpsEvent } from "./observability";
@@ -41,8 +42,10 @@ export interface LiveKitCallbacks {
   onError?: (err: Error) => void;
   onReconnecting?: () => void;
   onReconnected?: () => void;
-  /** Fires when audio was initially blocked by autoplay policy and is now waiting for user gesture. */
+  /** Browser autoplay policy blocked remote playback until user gesture. */
   onAudioBlocked?: () => void;
+  /** Fires when local mic enable state changes (publisher only). */
+  onMicrophoneEnabledChanged?: (enabled: boolean) => void;
 }
 
 const LIVEKIT_URL = import.meta.env.VITE_LIVEKIT_URL as string | undefined;
@@ -121,6 +124,14 @@ export async function connectToMehfil(
   };
 
   const room = new Room(opts);
+
+  function syncLocalMicUi() {
+    try {
+      callbacks.onMicrophoneEnabledChanged?.(room.localParticipant.isMicrophoneEnabled);
+    } catch {
+      /* ignore */
+    }
+  }
 
   const audioElements: HTMLAudioElement[] = [];
   /** Dedupe attachments per publication — avoids ghost duplicate <audio> nodes. */
@@ -396,12 +407,19 @@ export async function connectToMehfil(
 
     await room.startAudio().catch(() => {});
 
+    room.localParticipant.on(ParticipantEvent.LocalTrackPublished, syncLocalMicUi);
+    room.localParticipant.on(ParticipantEvent.LocalTrackUnpublished, syncLocalMicUi);
+    room.localParticipant.on(ParticipantEvent.TrackMuted, syncLocalMicUi);
+    room.localParticipant.on(ParticipantEvent.TrackUnmuted, syncLocalMicUi);
+    syncLocalMicUi();
+
     window.setTimeout(() => {
       syncExistingRemoteAudio("post_connect_tick");
       schedulePlaybackRetries("post_connect");
     }, 90);
     window.setTimeout(() => syncExistingRemoteAudio("post_connect_400ms"), 400);
     window.setTimeout(() => syncExistingRemoteAudio("post_connect_900ms"), 900);
+    window.setTimeout(() => syncExistingRemoteAudio("post_connect_2000ms"), 2000);
 
     window.setTimeout(() => primePlayback("post_connect_150ms"), 150);
     window.setTimeout(() => primePlayback("post_connect_650ms"), 650);
@@ -422,6 +440,7 @@ export async function connectToMehfil(
   if (canPublish) {
     try {
       await room.localParticipant.setMicrophoneEnabled(true);
+      syncLocalMicUi();
       const verifyMic = (phase: string) => {
         try {
           let publishing = false;
@@ -468,6 +487,7 @@ export async function connectToMehfil(
       try {
         await room.localParticipant.setMicrophoneEnabled(enabled);
         audioLog("set_mic", { room_id: roomId, enabled });
+        syncLocalMicUi();
       } catch (err) {
         console.warn("[LiveKit] setMicEnabled error", err);
         audioLog("set_mic_error", { room_id: roomId, message: err instanceof Error ? err.message : String(err) });

@@ -1035,7 +1035,8 @@ export type MehfilReplayRow = {
   id: string;
   mehfilId: string;
   hostId: string;
-  audioUrl: string;
+  /** Present once studio / pipeline attaches replay audio */
+  audioUrl?: string | null;
   title: string;
   coverUrl?: string;
   durationSec?: number;
@@ -1051,7 +1052,7 @@ function mapMehfilReplayRow(r: Record<string, unknown>): MehfilReplayRow {
     id: r.id as string,
     mehfilId: r.mehfil_id as string,
     hostId: r.host_id as string,
-    audioUrl: r.audio_url as string,
+    audioUrl: (r.audio_url as string | null | undefined) ?? null,
     title: (r.title as string) ?? "",
     coverUrl: (r.cover_url as string) ?? undefined,
     durationSec: (r.duration_sec as number) ?? undefined,
@@ -1061,6 +1062,21 @@ function mapMehfilReplayRow(r: Record<string, unknown>): MehfilReplayRow {
     deleted: Boolean(r.deleted),
     createdAt: r.created_at as string,
   };
+}
+
+export async function getMehfilReplayDraft(mehfilId: string): Promise<MehfilReplayRow | null> {
+  const me = getCurrentUserId();
+  if (!me) return null;
+  const { data, error } = await supabase
+    .from("mehfil_replays")
+    .select("*")
+    .eq("mehfil_id", mehfilId)
+    .eq("host_id", me)
+    .eq("published", false)
+    .eq("deleted", false)
+    .maybeSingle();
+  if (error || !data) return null;
+  return mapMehfilReplayRow(data as Record<string, unknown>);
 }
 
 export async function getPublishedMehfilReplay(mehfilId: string): Promise<MehfilReplayRow | null> {
@@ -1077,7 +1093,8 @@ export async function getPublishedMehfilReplay(mehfilId: string): Promise<Mehfil
 
 export async function upsertMehfilReplayDraft(vars: {
   mehfilId: string;
-  audioUrl: string;
+  /** Null when studio replay audio is not attached yet (live pipeline). */
+  audioUrl: string | null;
   title: string;
   coverUrl?: string;
   durationSec?: number;
@@ -1135,13 +1152,15 @@ export async function publishMehfilReplay(replayId: string): Promise<Post> {
   const { data: r, error: fetchErr } = await supabase.from("mehfil_replays").select("*").eq("id", replayId).maybeSingle();
   if (fetchErr || !r || r.host_id !== me) throw new Error("not_found");
   if (r.published && r.post_id) throw new Error("already_published");
+  const audioUrl = r.audio_url as string | null;
+  if (!audioUrl || !String(audioUrl).trim()) throw new Error("replay_audio_pending");
 
   const post = await addPost({
     kind: "voice",
     authorId: me,
     title: r.title || "Mehfil replay",
     body: "",
-    audioUrl: r.audio_url,
+    audioUrl,
     coverUrl: r.cover_url ?? undefined,
     durationSec: r.duration_sec ?? undefined,
     language: "or",
@@ -1869,7 +1888,11 @@ export function useEndMehfil() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (id: string) => endMehfil(id),
-    onSuccess: () => { qc.invalidateQueries(); toast.success("Mehfil ended"); },
+    onSuccess: (_d, id) => {
+      qc.invalidateQueries({ queryKey: QK.mehfils });
+      qc.invalidateQueries({ queryKey: QK.mehfil(id) });
+      qc.invalidateQueries({ predicate: (q) => q.queryKey[0] === "mehfilsByHost" });
+    },
   });
 }
 

@@ -29,6 +29,13 @@ export type PresencePayload = {
 
 export type ChatMsg = { id: string; userId: string; name: string; text: string };
 
+export type MehfilSupportBroadcast = {
+  kind: string;
+  amount: number;
+  from_user_id: string;
+  from_display_name: string;
+};
+
 export function presenceRoleFor(meHost: boolean, queueSpeaking: boolean): PresenceRole {
   if (meHost) return "host";
   if (queueSpeaking) return "speaker";
@@ -57,6 +64,7 @@ export function useMehfilRoomSession(
   const [muted, setMuted] = useState(false);
   const [lkConnState, setLkConnState] = useState<ConnectionState | null>(null);
   const [audioBlocked, setAudioBlocked] = useState(false);
+  const [supportMoment, setSupportMoment] = useState<MehfilSupportBroadcast | null>(null);
 
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
   const chatRef = useRef<HTMLDivElement>(null);
@@ -67,6 +75,8 @@ export function useMehfilRoomSession(
   const mutedRef = useRef(false);
   const prevQueueStatusRef = useRef<string | undefined>(undefined);
   const prevLkConnRef = useRef<ConnectionState | null>(null);
+  const supportDismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const publishGateRef = useRef(false);
 
   const lkCbRef = useRef({
     setLkConnState: (_s: ConnectionState) => {},
@@ -74,6 +84,11 @@ export function useMehfilRoomSession(
   });
   lkCbRef.current.setLkConnState = setLkConnState;
   lkCbRef.current.setAudioBlocked = setAudioBlocked;
+
+  const onMicrophoneEnabledChanged = useCallback((enabled: boolean) => {
+    if (!publishGateRef.current) return;
+    setMuted(!enabled);
+  }, []);
 
   const sawLiveRef = useRef(false);
 
@@ -89,6 +104,10 @@ export function useMehfilRoomSession(
           return ix >= 0 ? ix + 1 : null;
         })()
       : null;
+
+  useEffect(() => {
+    publishGateRef.current = canPublishNow;
+  }, [canPublishNow]);
 
   useEffect(() => {
     mutedRef.current = muted;
@@ -119,6 +138,9 @@ export function useMehfilRoomSession(
         const ctrl = await connectToMehfil(mehfilId, me, wantPublish, {
           onConnectionStateChange: (state) => cbs.setLkConnState(state),
           onParticipantCountChange: () => {},
+          onMicrophoneEnabledChanged: (enabled) => {
+            if (publishGateRef.current) setMuted(!enabled);
+          },
           onError: (err) => {
             console.error("[LiveKit] reconnect error", err);
             logOpsEvent("livekit_reconnect_failed", { mehfil_id: mehfilId, message: err.message });
@@ -153,6 +175,22 @@ export function useMehfilRoomSession(
   }, [joined, isHost, myEntry?.status, mehfilId, me]);
 
   const lkConnected = lkConnState === ConnectionState.Connected;
+
+  useEffect(() => {
+    if (!joined || !lkConnected || !livekitRef.current || !canPublishNow) return;
+    const tick = () => {
+      try {
+        const micOn = livekitRef.current?.room.localParticipant.isMicrophoneEnabled;
+        if (typeof micOn === "boolean") setMuted(!micOn);
+      } catch {
+        /* ignore */
+      }
+    };
+    const id = window.setInterval(tick, 2200);
+    tick();
+    return () => clearInterval(id);
+  }, [joined, lkConnected, canPublishNow]);
+
   useEffect(() => {
     if (!lkConnected || !livekitRef.current) return;
     const publishing = isHost || myEntry?.status === "speaking";
@@ -237,6 +275,10 @@ export function useMehfilRoomSession(
       clearTimeout(lkReconnectScheduledRef.current);
       lkReconnectScheduledRef.current = null;
     }
+    if (supportDismissTimerRef.current) {
+      clearTimeout(supportDismissTimerRef.current);
+      supportDismissTimerRef.current = null;
+    }
     channelRef.current?.untrack();
     if (channelRef.current) supabase.removeChannel(channelRef.current);
     channelRef.current = null;
@@ -257,6 +299,21 @@ export function useMehfilRoomSession(
     });
   }, [isHost, me]);
 
+  const broadcastRoomSupport = useCallback((payload: MehfilSupportBroadcast) => {
+    const ch = channelRef.current;
+    if (!ch) return;
+    void ch.send({
+      type: "broadcast",
+      event: "support_received",
+      payload: {
+        kind: payload.kind,
+        amount: payload.amount,
+        from_user_id: payload.from_user_id,
+        from_display_name: payload.from_display_name,
+      },
+    });
+  }, []);
+
   const joinRoom = useCallback(async () => {
     if (!me || !myUser || !mehfil) return;
     setJoined(true);
@@ -267,6 +324,7 @@ export function useMehfilRoomSession(
       connectToMehfil(mehfilId, me, canPublish, {
         onConnectionStateChange: setLkConnState,
         onParticipantCountChange: () => {},
+        onMicrophoneEnabledChanged,
         onError: (err) => {
           console.error("[LiveKit] error", err);
           logOpsEvent("livekit_error", { mehfil_id: mehfilId, message: err.message });
@@ -315,6 +373,36 @@ export function useMehfilRoomSession(
         void livekitRef.current?.setMicEnabled(false);
         toast.message("Host muted your microphone", { duration: 2400 });
       })
+      .on("broadcast", { event: "support_received" }, ({ payload }: { payload?: MehfilSupportBroadcast }) => {
+        if (!payload?.from_user_id) return;
+        setSupportMoment(payload);
+        const kindLabel =
+          payload.kind === "chai"
+            ? "Chai"
+            : payload.kind === "rose"
+              ? "Rose"
+              : payload.kind === "applaud"
+                ? "Applause"
+                : payload.kind === "support"
+                  ? "Support"
+                  : payload.kind;
+        const sysMsg: ChatMsg = {
+          id: `s${Date.now()}`,
+          userId: "__system__",
+          name: payload.from_display_name,
+          text: `· ${kindLabel}${payload.amount > 1 ? ` ×${payload.amount}` : ""}`,
+        };
+        setChat((c) => [...c.slice(-80), sysMsg]);
+        setTimeout(() => chatRef.current?.scrollTo({ top: 9999, behavior: "smooth" }), 40);
+        if (supportDismissTimerRef.current) clearTimeout(supportDismissTimerRef.current);
+        supportDismissTimerRef.current = setTimeout(() => {
+          setSupportMoment(null);
+          supportDismissTimerRef.current = null;
+        }, 5600);
+        if (mehfil?.hostId && me === mehfil.hostId) {
+          toast.message(`${payload.from_display_name} sent appreciation`, { duration: 3000 });
+        }
+      })
       .subscribe(async (status) => {
         if (status !== "SUBSCRIBED") return;
         await channel.track({
@@ -327,9 +415,14 @@ export function useMehfilRoomSession(
       });
 
     channelRef.current = channel;
-  }, [me, myUser, mehfil, mehfilId, isHost, myEntry?.status]);
+  }, [me, myUser, mehfil, mehfilId, isHost, myEntry?.status, onMicrophoneEnabledChanged]);
 
   const leaveRoom = useCallback(() => {
+    setSupportMoment(null);
+    if (supportDismissTimerRef.current) {
+      clearTimeout(supportDismissTimerRef.current);
+      supportDismissTimerRef.current = null;
+    }
     teardown();
     endedRef.current = false;
     sawLiveRef.current = false;
@@ -436,5 +529,7 @@ export function useMehfilRoomSession(
     finalizeHostEnd,
     closeReplayAndExit,
     teardown,
+    supportMoment,
+    broadcastRoomSupport,
   };
 }

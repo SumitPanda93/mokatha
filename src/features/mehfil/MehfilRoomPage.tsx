@@ -4,6 +4,7 @@
 import { useState } from "react";
 import { useParams, useLocation, Link } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
+import { toast } from "sonner";
 import { useTitle } from "@/hooks/useTitle";
 import {
   useMehfilRoom,
@@ -43,6 +44,14 @@ const FG = "#f5f3ef";
 const GOLD = "#c9a84c";
 const MINT = "#8fffdf";
 
+function supportKindLabel(kind: string) {
+  if (kind === "chai") return "Chai";
+  if (kind === "rose") return "Rose";
+  if (kind === "applaud") return "Applause";
+  if (kind === "support") return "Support";
+  return kind;
+}
+
 function AvatarStack({ users, max = 7 }: { users: PresencePayload[]; max?: number }) {
   const visible = users.slice(0, max);
   const extra = users.length - max;
@@ -80,13 +89,13 @@ function AvatarStack({ users, max = 7 }: { users: PresencePayload[]; max?: numbe
 
 function WaveOrb({ active }: { active: boolean }) {
   return (
-    <div className="flex items-end justify-center gap-[3px] h-9 px-1">
-      {Array.from({ length: 14 }).map((_, i) => (
+    <div className="flex items-end justify-center gap-[3px] h-11 px-1">
+      {Array.from({ length: 16 }).map((_, i) => (
         <motion.div
           key={i}
           className="w-[2.5px] rounded-full"
-          style={{ background: active ? GOLD : "rgba(201,168,76,0.14)" }}
-          animate={{ height: active ? [5, 22, 8, 18, 12][i % 5] : 4 }}
+          style={{ background: active ? GOLD : "rgba(201,168,76,0.12)" }}
+          animate={{ height: active ? [6, 26, 9, 22, 14][i % 5] : 4 }}
           transition={{ duration: 0.62 + (i % 5) * 0.05, repeat: Infinity, repeatType: "mirror", delay: i * 0.045 }}
         />
       ))}
@@ -148,28 +157,28 @@ function StageSpeaker({ userId, row }: { userId: string; row?: PresencePayload }
     <motion.div
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
-      className="relative mt-6 px-4 py-3.5 rounded-[22px] flex items-center gap-3 overflow-hidden"
+      className="relative mt-7 px-5 py-4 rounded-[26px] flex items-center gap-4 overflow-hidden"
       style={{
         border: "1px solid rgba(143,255,223,0.12)",
         background: "linear-gradient(135deg, rgba(143,255,223,0.06), rgba(255,255,255,0.02))",
       }}
     >
       <motion.div
-        className="pointer-events-none absolute inset-0 rounded-[22px]"
+        className="pointer-events-none absolute inset-0 rounded-[26px]"
         animate={{ opacity: [0.35, 0.65, 0.35] }}
         transition={{ duration: 3.2, repeat: Infinity, ease: "easeInOut" }}
         style={{
           boxShadow: "inset 0 0 42px rgba(143,255,223,0.07)",
         }}
       />
-      <div className="relative w-11 h-11 rounded-full overflow-hidden shrink-0 ring-2 ring-[rgba(143,255,223,0.35)]">
+      <div className="relative w-[52px] h-[52px] rounded-full overflow-hidden shrink-0 ring-2 ring-[rgba(143,255,223,0.38)]">
         {avatar ? <img src={avatar} alt="" className="w-full h-full object-cover" /> : (
           <div className="w-full h-full flex items-center justify-center text-sm" style={{ background: "rgba(143,255,223,0.12)", color: MINT }}>{name.charAt(0)}</div>
         )}
       </div>
       <div className="relative flex-1 min-w-0">
         <div className="text-[9px] uppercase tracking-[0.24em] font-['Inter'] font-semibold" style={{ color: MINT }}>Speaking</div>
-        <div className="font-['Playfair_Display'] text-[16px] truncate text-white">{name}</div>
+        <div className="font-['Playfair_Display'] text-[17px] truncate text-white">{name}</div>
       </div>
       <div className="relative">
         <WaveOrb active />
@@ -232,6 +241,17 @@ export default function MehfilRoomPage() {
   const startMehfilMut = useStartMehfil();
   const hostInviteMut = useHostInviteSpeaker();
   const hostRemoveMut = useHostRemoveFromStage();
+
+  const handleLeave = () => {
+    if (session.isHost && mehfil.isLive) {
+      endMehfilMut.mutate(id, {
+        onSuccess: () => session.leaveRoom(),
+        onError: (err: Error) => toast.error(err.message || "Could not end session"),
+      });
+    } else {
+      session.leaveRoom();
+    }
+  };
 
   const [dock, setDock] = useState<"chat" | "stage">("chat");
   const [hostGoingLive, setHostGoingLive] = useState(false);
@@ -412,8 +432,40 @@ export default function MehfilRoomPage() {
         )}
       </AnimatePresence>
 
+      <AnimatePresence>
+        {session.supportMoment ? (
+          <motion.div
+            key="support-moment"
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            transition={OVERLAY_FADE}
+            className="relative z-30 mx-5 mt-1 px-4 py-2.5 rounded-[999px] border border-white/[0.08] bg-black/35 backdrop-blur-xl shadow-[0_12px_40px_rgba(0,0,0,0.35)]"
+          >
+            <motion.div
+              className="pointer-events-none absolute inset-0 rounded-[999px] opacity-40"
+              animate={{ opacity: [0.28, 0.42, 0.28] }}
+              transition={{ duration: 3.5, repeat: Infinity, ease: "easeInOut" }}
+              style={{
+                background: "linear-gradient(110deg, rgba(201,168,76,0.14), transparent 55%, rgba(143,255,223,0.08))",
+              }}
+            />
+            <p className="relative text-center text-[11px] font-['Inter'] tracking-[0.02em]" style={{ color: "rgba(245,243,239,0.72)" }}>
+              <span className="font-['Playfair_Display'] text-[14px]" style={{ color: "#e8c97a" }}>
+                {session.supportMoment.from_display_name}
+              </span>
+              <span className="opacity-50"> · </span>
+              <span>{supportKindLabel(session.supportMoment.kind)}</span>
+              {session.supportMoment.amount > 1 ? (
+                <span style={{ color: "rgba(245,243,239,0.45)" }}> ×{session.supportMoment.amount}</span>
+              ) : null}
+            </p>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
+
       <header className="relative z-20 flex items-center justify-between px-5 pt-[max(env(safe-area-inset-top),16px)] pb-3 gap-2">
-        <button type="button" onClick={session.leaveRoom} className="text-[13px] px-3 py-1.5 rounded-full bg-white/[0.06] border border-white/[0.08] shrink-0">Leave</button>
+        <button type="button" onClick={handleLeave} className="text-[13px] px-3 py-1.5 rounded-full bg-white/[0.06] border border-white/[0.08] shrink-0">Leave</button>
         <div className="flex items-center gap-2 px-3 py-1 rounded-full border border-white/[0.1] bg-black/20 backdrop-blur-md">
           <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${livePulse ? "bg-emerald-400 animate-pulse" : "bg-white/30"}`} />
           <span className="text-[10px] tracking-[0.2em] uppercase font-semibold whitespace-nowrap">
@@ -460,14 +512,14 @@ export default function MehfilRoomPage() {
           <motion.div
             className="pointer-events-none absolute rounded-full"
             style={{
-              inset: -14,
+              inset: -18,
               background: "radial-gradient(circle, rgba(201,168,76,0.22), transparent 68%)",
-              filter: "blur(14px)",
+              filter: "blur(16px)",
             }}
             animate={{ opacity: livePulse ? [0.45, 0.85, 0.45] : 0.28, scale: livePulse ? [1, 1.06, 1] : 1 }}
             transition={{ duration: livePulse ? 2.8 : 4, repeat: Infinity, ease: "easeInOut" }}
           />
-          <div className="relative w-[104px] h-[104px] rounded-full overflow-hidden ring-1 ring-white/14 shadow-[0_24px_70px_rgba(0,0,0,0.65)] bg-white/[0.04]">
+          <div className="relative w-[118px] h-[118px] rounded-full overflow-hidden ring-1 ring-white/12 shadow-[0_28px_80px_rgba(0,0,0,0.68)] bg-white/[0.04]">
             {(host?.avatarUrl || mehfil.coverUrl) ? (
               <img src={host?.avatarUrl || mehfil.coverUrl} alt="" className="w-full h-full object-cover" />
             ) : (
@@ -514,12 +566,21 @@ export default function MehfilRoomPage() {
               {session.chat.length === 0 && <div className="text-center py-8 opacity-30 text-[12px]">Silence before the first word…</div>}
               {session.chat.map((m: ChatMsg) => (
                 <div key={m.id}>
-                  {m.userId === me ? (
-                    <span style={{ color: MINT }} className="font-medium">{m.name}: </span>
+                  {m.userId === "__system__" ? (
+                    <div className="text-[11px] text-center py-0.5 opacity-80">
+                      <span style={{ color: GOLD }} className="font-['Playfair_Display']">{m.name}</span>
+                      <span style={{ color: "rgba(245,243,239,0.5)" }}>{m.text}</span>
+                    </div>
                   ) : (
-                    <span style={{ color: GOLD }} className="font-medium">{m.name}: </span>
+                    <>
+                      {m.userId === me ? (
+                        <span style={{ color: MINT }} className="font-medium">{m.name}: </span>
+                      ) : (
+                        <span style={{ color: GOLD }} className="font-medium">{m.name}: </span>
+                      )}
+                      <span style={{ color: "rgba(245,243,239,0.75)" }}>{m.text}</span>
+                    </>
                   )}
-                  <span style={{ color: "rgba(245,243,239,0.75)" }}>{m.text}</span>
                 </div>
               ))}
             </div>
@@ -571,14 +632,13 @@ export default function MehfilRoomPage() {
       </div>
 
       <footer className="relative z-10 flex justify-center px-4 pt-3 pb-[max(env(safe-area-inset-bottom),16px)] pointer-events-none">
-        <div className="pointer-events-auto flex items-center gap-2 px-2.5 py-2 rounded-[999px] border border-white/[0.09] bg-black/55 backdrop-blur-xl shadow-[0_16px_48px_rgba(0,0,0,0.5)]">
+        <div className="pointer-events-auto flex items-center gap-2 px-3 py-2 rounded-[999px] border border-white/[0.06] bg-black/40 backdrop-blur-2xl shadow-[0_12px_42px_rgba(0,0,0,0.42)]">
           <motion.button type="button" whileTap={{ scale: 0.96 }} onClick={() => session.setSupportOpen(true)} className="px-4 py-2.5 rounded-full text-[12px] border border-white/[0.08] bg-white/[0.05]">Chai</motion.button>
           {session.canPublishNow && (
             <motion.button type="button" whileTap={{ scale: 0.96 }}
               onClick={async () => {
-                const nm = !session.muted;
-                session.setMuted(nm);
-                await session.livekitRef.current?.setMicEnabled(!nm);
+                const nextMuted = !session.muted;
+                await session.livekitRef.current?.setMicEnabled(!nextMuted);
               }}
               className="w-12 h-12 rounded-full flex items-center justify-center border border-white/[0.1]"
               style={{ background: session.muted ? "rgba(247,106,74,0.12)" : "rgba(255,255,255,0.06)" }}
@@ -764,7 +824,7 @@ export default function MehfilRoomPage() {
 
       <AnimatePresence>
         {session.supportOpen && mehfil.hostId && (
-          <SupportSheet toUserId={mehfil.hostId} toUserName={host?.displayName ?? "Host"} mehfilId={id} onClose={() => session.setSupportOpen(false)} />
+          <SupportSheet toUserId={mehfil.hostId} toUserName={host?.displayName ?? "Host"} mehfilId={id} onSupportSent={session.broadcastRoomSupport} onClose={() => session.setSupportOpen(false)} />
         )}
       </AnimatePresence>
     </motion.div>

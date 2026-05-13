@@ -5,7 +5,7 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Check } from "lucide-react";
-import { useSendSupport, useWalletBalance, useAdminConfig, SupportActionKind, getCurrentUserId } from "@/lib/store";
+import { useSendSupport, useWalletBalance, useAdminConfig, useCurrentUser, SupportActionKind, getCurrentUserId } from "@/lib/store";
 import { trackEvent } from "@/lib/analytics";
 
 // ─── Action definitions ───────────────────────────────────────────────────────
@@ -27,14 +27,22 @@ interface SupportSheetProps {
   postId?: string;
   mehfilId?: string;
   onClose: () => void;
+  /** Room-only: notify Mehfil channel after successful send */
+  onSupportSent?: (payload: {
+    kind: SupportActionKind;
+    amount: number;
+    from_user_id: string;
+    from_display_name: string;
+  }) => void;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function SupportSheet({
-  toUserId, toUserName, postId, mehfilId, onClose,
+  toUserId, toUserName, postId, mehfilId, onClose, onSupportSent,
 }: SupportSheetProps) {
   const me = getCurrentUserId();
+  const { data: profile } = useCurrentUser();
   const { data: balance = 0 } = useWalletBalance(me ?? "");
   const { data: config } = useAdminConfig();
   const send = useSendSupport();
@@ -50,6 +58,14 @@ export default function SupportSheet({
   const handleSend = async () => {
     if (!canSend) return;
     await send.mutateAsync({ toUserId, actionType: action, amount, postId, mehfilId });
+    if (mehfilId && me && onSupportSent) {
+      onSupportSent({
+        kind: action,
+        amount,
+        from_user_id: me,
+        from_display_name: profile?.displayName ?? "Someone",
+      });
+    }
     trackEvent("support_action", {
       action,
       amount,
