@@ -3,8 +3,7 @@ import { useLocation } from "wouter";
 import { motion } from "framer-motion";
 import { ArrowLeft, Mic, Square, Pause, Play, Trash2, Loader2, ImagePlus, X } from "lucide-react";
 import { useTitle } from "@/hooks/useTitle";
-import { useAddPost, getCurrentUserId, uploadAudio } from "@/lib/store";
-import { supabase } from "@/lib/supabase";
+import { useAddPost, getCurrentUserId, uploadAudio, uploadPostCoverImage } from "@/lib/store";
 import { toast } from "sonner";
 
 type Take = { id: string; durationSec: number; selected: boolean; audioUrl: string };
@@ -12,16 +11,6 @@ type Take = { id: string; durationSec: number; selected: boolean; audioUrl: stri
 function getSupportedMimeType(): string {
   const candidates = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus", "audio/ogg", "audio/mp4"];
   return candidates.find((t) => MediaRecorder.isTypeSupported(t)) ?? "";
-}
-
-/** Upload a cover image file to Supabase Storage */
-async function uploadCoverImage(userId: string, file: File): Promise<string> {
-  const ext = file.name.split(".").pop() ?? "jpg";
-  const path = `covers/${userId}/${Date.now()}.${ext}`;
-  const { error } = await supabase.storage.from("audio").upload(path, file, { upsert: true });
-  if (error) throw error;
-  const { data } = supabase.storage.from("audio").getPublicUrl(path);
-  return data.publicUrl;
 }
 
 function VoiceTakePreview({ audioUrl, durationSec }: { audioUrl: string; durationSec: number }) {
@@ -209,10 +198,10 @@ export default function CreateVoice() {
     setCoverPreview(localUrl);
     setUploadingCover(true);
     try {
-      const url = await uploadCoverImage(me, file);
+      const url = await uploadPostCoverImage(me, file);
       setCoverUrl(url);
-    } catch (err: any) {
-      toast.error("Cover upload failed");
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Cover upload failed");
       setCoverPreview(null);
     } finally {
       setUploadingCover(false);

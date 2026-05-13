@@ -1213,6 +1213,8 @@ export async function updateUser(userId: string, patch: Partial<User>): Promise<
 }
 
 export async function uploadAvatar(userId: string, file: File): Promise<string> {
+  const cfg = await getAdminConfig();
+  assertUploadWithinMb(file.size, cfg.max_upload_avatar_mb, "Avatar photo");
   const ext = file.name.split(".").pop() ?? "jpg";
   const path = `avatars/${userId}/avatar.${ext}`;
   const { error } = await supabase.storage.from("avatars").upload(path, file, { upsert: true, contentType: file.type });
@@ -1221,7 +1223,32 @@ export async function uploadAvatar(userId: string, file: File): Promise<string> 
   return `${data.publicUrl}?t=${Date.now()}`;
 }
 
+/** Story / voice post cover images — `audio` bucket, covers/ prefix */
+export async function uploadPostCoverImage(userId: string, file: File): Promise<string> {
+  const cfg = await getAdminConfig();
+  assertUploadWithinMb(file.size, cfg.max_upload_audio_mb, "Cover image");
+  const ext = file.name.split(".").pop() ?? "jpg";
+  const path = `covers/${userId}/${Date.now()}.${ext}`;
+  const { error } = await supabase.storage.from("audio").upload(path, file, { upsert: true, contentType: file.type });
+  if (error) throw new Error(error.message);
+  const { data } = supabase.storage.from("audio").getPublicUrl(path);
+  return data.publicUrl;
+}
+
+/** Reel thumbnail JPEG from canvas — same bucket limit as other covers */
+export async function uploadReelPosterJpeg(userId: string, blob: Blob): Promise<string> {
+  const cfg = await getAdminConfig();
+  assertUploadWithinMb(blob.size, cfg.max_upload_audio_mb, "Poster image");
+  const path = `covers/${userId}/${Date.now()}.jpg`;
+  const { error } = await supabase.storage.from("audio").upload(path, blob, { upsert: true, contentType: "image/jpeg" });
+  if (error) throw new Error(error.message);
+  const { data } = supabase.storage.from("audio").getPublicUrl(path);
+  return data.publicUrl;
+}
+
 export async function uploadAudio(userId: string, blob: Blob, ext = "webm"): Promise<string> {
+  const cfg = await getAdminConfig();
+  assertUploadWithinMb(blob.size, cfg.max_upload_audio_mb, "Voice recording");
   const filename = `${Date.now()}_${Math.random().toString(36).slice(2, 7)}.${ext}`;
   const path = `voices/${userId}/${filename}`;
   const contentType = blob.type || `audio/${ext}`;
@@ -1232,6 +1259,9 @@ export async function uploadAudio(userId: string, blob: Blob, ext = "webm"): Pro
 }
 
 export async function uploadMediaFile(userId: string, file: File, bucket: "audio" | "video"): Promise<string> {
+  const cfg = await getAdminConfig();
+  const label = bucket === "video" ? "Reel video" : "Audio file";
+  assertUploadWithinMb(file.size, cfg.max_upload_audio_mb, label);
   const ext = file.name.split(".").pop() ?? "mp4";
   const filename = `${Date.now()}_${Math.random().toString(36).slice(2, 7)}.${ext}`;
   const folder = bucket === "audio" ? "tracks" : "reels";
@@ -2403,6 +2433,12 @@ export type AdminConfig = {
   max_withdrawal_limit: number;
   reader_rewards_enabled: boolean;
   mehfil_ticket_cap: number;
+  /** Voice, reel video, post covers, reel posters — `audio` storage bucket */
+  max_upload_audio_mb: number;
+  /** Profile avatar — `avatars` storage bucket */
+  max_upload_avatar_mb: number;
+  /** JPEG width when generating reel cover from video frame */
+  reel_poster_width_px: number;
 };
 
 const ADMIN_CONFIG_DEFAULTS: AdminConfig = {
@@ -2411,7 +2447,24 @@ const ADMIN_CONFIG_DEFAULTS: AdminConfig = {
   max_withdrawal_limit: 500,
   reader_rewards_enabled: true,
   mehfil_ticket_cap: 5,
+  max_upload_audio_mb: 100,
+  max_upload_avatar_mb: 5,
+  reel_poster_width_px: 720,
 };
+
+function clampAdminInt(raw: unknown, lo: number, hi: number, fallback: number): number {
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(hi, Math.max(lo, Math.round(n)));
+}
+
+/** Client-side guard before Storage upload; bucket limits must be ≥ these sizes (Supabase Dashboard). */
+export function assertUploadWithinMb(byteLength: number, maxMb: number, label: string): void {
+  const lim = maxMb * 1024 * 1024;
+  if (byteLength <= lim) return;
+  const mb = Math.round((byteLength / (1024 * 1024)) * 10) / 10;
+  throw new Error(`${label} must be ${maxMb} MB or smaller (this file is ~${mb} MB)`);
+}
 
 function mapQueueEntry(r: any): QueueEntry {
   return {
@@ -2482,11 +2535,14 @@ export async function getAdminConfig(): Promise<AdminConfig> {
   const m: Record<string, string> = {};
   data.forEach((r: any) => { m[r.key] = r.value; });
   return {
-    max_support_amount:    Number(m.max_support_amount    ?? 5),
-    daily_support_limit:   Number(m.daily_support_limit   ?? 25),
-    max_withdrawal_limit:  Number(m.max_withdrawal_limit  ?? 500),
+    max_support_amount: Number(m.max_support_amount ?? 5),
+    daily_support_limit: Number(m.daily_support_limit ?? 25),
+    max_withdrawal_limit: Number(m.max_withdrawal_limit ?? 500),
     reader_rewards_enabled: m.reader_rewards_enabled !== "false",
-    mehfil_ticket_cap:     Number(m.mehfil_ticket_cap    ?? 5),
+    mehfil_ticket_cap: Number(m.mehfil_ticket_cap ?? 5),
+    max_upload_audio_mb: clampAdminInt(m.max_upload_audio_mb, 1, 512, ADMIN_CONFIG_DEFAULTS.max_upload_audio_mb),
+    max_upload_avatar_mb: clampAdminInt(m.max_upload_avatar_mb, 1, 50, ADMIN_CONFIG_DEFAULTS.max_upload_avatar_mb),
+    reel_poster_width_px: clampAdminInt(m.reel_poster_width_px, 320, 4096, ADMIN_CONFIG_DEFAULTS.reel_poster_width_px),
   };
 }
 
@@ -2600,6 +2656,8 @@ export async function sendAudioLetter(
 }
 
 export async function uploadAudioLetter(userId: string, blob: Blob): Promise<string> {
+  const cfg = await getAdminConfig();
+  assertUploadWithinMb(blob.size, cfg.max_upload_audio_mb, "Voice letter");
   const filename = `${Date.now()}_${Math.random().toString(36).slice(2, 7)}.webm`;
   const path = `letters/${userId}/${filename}`;
   const { error } = await supabase.storage.from("audio")

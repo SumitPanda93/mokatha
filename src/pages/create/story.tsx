@@ -3,20 +3,10 @@ import { useLocation } from "wouter";
 import { motion } from "framer-motion";
 import { ArrowLeft, Plus, Trash2, ImagePlus, X, Loader2 } from "lucide-react";
 import { useTitle } from "@/hooks/useTitle";
-import { useAddPost, getCurrentUserId } from "@/lib/store";
-import { supabase } from "@/lib/supabase";
+import { useAddPost, getCurrentUserId, uploadPostCoverImage } from "@/lib/store";
 import { toast } from "sonner";
 
 type Chapter = { id: string; title: string; body: string };
-
-async function uploadCoverImage(userId: string, file: File): Promise<string> {
-  const ext = file.name.split(".").pop() ?? "jpg";
-  const path = `covers/${userId}/${Date.now()}.${ext}`;
-  const { error } = await supabase.storage.from("audio").upload(path, file, { upsert: true });
-  if (error) throw error;
-  const { data } = supabase.storage.from("audio").getPublicUrl(path);
-  return data.publicUrl;
-}
 
 export default function CreateStory() {
   useTitle("Write story");
@@ -56,10 +46,10 @@ export default function CreateStory() {
     setCoverPreview(localUrl);
     setUploadingCover(true);
     try {
-      const url = await uploadCoverImage(me, file);
+      const url = await uploadPostCoverImage(me, file);
       setCoverUrl(url);
-    } catch {
-      toast.error("Cover upload failed");
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Cover upload failed");
       setCoverPreview(null);
     } finally {
       setUploadingCover(false);

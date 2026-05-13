@@ -3,19 +3,10 @@ import { useLocation } from "wouter";
 import { motion } from "framer-motion";
 import { ArrowLeft, Video, Loader2, X } from "lucide-react";
 import { useTitle } from "@/hooks/useTitle";
-import { useAddPost, getCurrentUserId, uploadReelVideoFile } from "@/lib/store";
-import { supabase } from "@/lib/supabase";
+import { useAddPost, getCurrentUserId, uploadReelVideoFile, getAdminConfig, uploadReelPosterJpeg } from "@/lib/store";
 import { toast } from "sonner";
 
-async function uploadPosterBlob(userId: string, blob: Blob): Promise<string> {
-  const path = `covers/${userId}/${Date.now()}.jpg`;
-  const { error } = await supabase.storage.from("audio").upload(path, blob, { upsert: true, contentType: "image/jpeg" });
-  if (error) throw error;
-  const { data } = supabase.storage.from("audio").getPublicUrl(path);
-  return data.publicUrl;
-}
-
-async function capturePosterFromVideoUrl(videoUrl: string, atSec: number): Promise<Blob | null> {
+async function capturePosterFromVideoUrl(videoUrl: string, atSec: number, posterWidthPx: number): Promise<Blob | null> {
   return new Promise((resolve) => {
     const v = document.createElement("video");
     v.crossOrigin = "anonymous";
@@ -44,7 +35,7 @@ async function capturePosterFromVideoUrl(videoUrl: string, atSec: number): Promi
         const h = v.videoHeight;
         if (!w || !h) return done(null);
         const canvas = document.createElement("canvas");
-        const tw = 720;
+        const tw = Math.max(320, Math.min(4096, Math.round(posterWidthPx)));
         const th = Math.round((h / w) * tw);
         canvas.width = tw;
         canvas.height = th;
@@ -138,8 +129,9 @@ export default function CreateReel() {
     }
     let coverUrl = "";
     try {
-      const blob = await capturePosterFromVideoUrl(videoUrl, trimStart);
-      if (blob) coverUrl = await uploadPosterBlob(me, blob);
+      const cfg = await getAdminConfig();
+      const blob = await capturePosterFromVideoUrl(videoUrl, trimStart, cfg.reel_poster_width_px);
+      if (blob) coverUrl = await uploadReelPosterJpeg(me, blob);
     } catch {
       /* poster optional */
     }
