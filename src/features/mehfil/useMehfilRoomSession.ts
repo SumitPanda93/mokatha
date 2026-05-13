@@ -74,6 +74,8 @@ export function useMehfilRoomSession(
   const lkReconnectScheduledRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const endedRef = useRef(false);
   const mutedRef = useRef(false);
+  /** Prevents duplicate Supabase channels / LiveKit connects when joinRoom races or effects re-fire. */
+  const joinCycleStartedRef = useRef(false);
   const prevQueueStatusRef = useRef<string | undefined>(undefined);
   const prevLkConnRef = useRef<ConnectionState | null>(null);
   const supportDismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -111,7 +113,13 @@ export function useMehfilRoomSession(
   }, [studio, isHost]);
 
   const bindLiveKitVideo = useCallback((local: HTMLElement | null, remote: HTMLElement | null) => {
-    livekitRef.current?.bindVideoElements({ local, remote });
+    const lk = livekitRef.current;
+    if (!lk) return;
+    const patch: Partial<{ local: HTMLElement | null; remote: HTMLElement | null }> = {};
+    if (local) patch.local = local;
+    if (remote) patch.remote = remote;
+    if (Object.keys(patch).length === 0) return;
+    lk.bindVideoElements(patch);
   }, []);
 
   const myEntry = queue.find((q) => q.userId === me);
@@ -292,6 +300,7 @@ export function useMehfilRoomSession(
       livekitRef.current?.disconnect();
       livekitRef.current = null;
       lkPublishModeRef.current = null;
+      joinCycleStartedRef.current = false;
       setJoined(false);
       setRoomEnded(true);
       toast.message("This Mehfil has ended.", { duration: 3200 });
@@ -313,6 +322,7 @@ export function useMehfilRoomSession(
     livekitRef.current?.disconnect();
     livekitRef.current = null;
     lkPublishModeRef.current = null;
+    joinCycleStartedRef.current = false;
   }, []);
 
   useEffect(() => () => teardown(), [teardown]);
@@ -344,6 +354,8 @@ export function useMehfilRoomSession(
 
   const joinRoom = useCallback(async () => {
     if (!me || !myUser || !mehfil) return;
+    if (joinCycleStartedRef.current) return;
+    joinCycleStartedRef.current = true;
     setJoined(true);
     earnInkPoints(me, 15).catch(console.warn);
 

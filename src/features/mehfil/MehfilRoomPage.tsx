@@ -234,6 +234,20 @@ export default function MehfilRoomPage() {
 
   const session = useMehfilRoomSession(id, mehfil, queue, navigateOut);
 
+  const needsTicket =
+    !!mehfil &&
+    !session.isHost &&
+    (mehfil.isTicketed ?? false) &&
+    (mehfil.ticketPrice ?? 0) > 0 &&
+    !session.hasTicket;
+
+  /* Single gate from lobby → joined room whenever DB marks live (host resume + follower deep-link). */
+  useEffect(() => {
+    if (!mehfil || session.joined || session.roomEnded) return;
+    if (!mehfil.isLive || needsTicket) return;
+    void session.joinRoom();
+  }, [mehfil, session.joined, session.roomEnded, needsTicket, session.joinRoom]);
+
   const recordingStartedRef = useRef(false);
   const localVidRef = useRef<HTMLDivElement>(null);
   const remoteVidRef = useRef<HTMLDivElement>(null);
@@ -255,7 +269,18 @@ export default function MehfilRoomPage() {
 
   useEffect(() => {
     if (!session.joined) return;
-    session.bindLiveKitVideo(localVidRef.current, remoteVidRef.current);
+    let cancelled = false;
+    const bind = () => {
+      if (!cancelled) session.bindLiveKitVideo(localVidRef.current, remoteVidRef.current);
+    };
+    const rafId = requestAnimationFrame(() => {
+      bind();
+      requestAnimationFrame(bind);
+    });
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(rafId);
+    };
   }, [session.joined, session.lkConnected, session.bindLiveKitVideo, session.studio]);
 
   const raiseHandMut = useRaiseHand();
@@ -281,7 +306,6 @@ export default function MehfilRoomPage() {
   };
 
   const [dock, setDock] = useState<"chat" | "stage">("chat");
-  const [hostGoingLive, setHostGoingLive] = useState(false);
   const [participantsOpen, setParticipantsOpen] = useState(false);
 
   if (isLoading || !mehfil) {
@@ -315,18 +339,28 @@ export default function MehfilRoomPage() {
     );
   }
 
-  const needsTicket = !session.isHost && (mehfil.isTicketed ?? false) && (mehfil.ticketPrice ?? 0) > 0 && !session.hasTicket;
   if (needsTicket && !session.joined) {
     return <TicketGate mehfil={mehfil} host={host} onPay={session.buyTicket} onLeave={navigateOut} paying={session.payingTicket} />;
   }
 
+  if (!session.joined && mehfil.isLive && !session.roomEnded) {
+    return (
+      <div className="min-h-[100dvh] flex flex-col items-center justify-center px-8 gap-5 font-['Inter']" style={{ background: BG, color: FG }}>
+        <motion.div
+          className="w-10 h-10 rounded-full border-2 border-t-transparent animate-spin"
+          style={{ borderColor: `${GOLD}55`, borderTopColor: "transparent" }}
+        />
+        <p className="text-[13px] text-center leading-relaxed" style={{ color: "rgba(245,243,239,0.42)" }}>
+          Joining the gathering…
+        </p>
+      </div>
+    );
+  }
+
   if (!session.joined) {
     const dbLive = mehfil.isLive;
-    const phaseLabel = session.isHost
-      ? (hostGoingLive && !dbLive ? "Going live…" : dbLive ? "Live" : "Scheduled")
-      : dbLive ? "Live" : "Scheduled";
-    const listenerCanEnter = dbLive;
-    const pulseLive = dbLive || (session.isHost && hostGoingLive);
+    const phaseLabel = session.isHost ? (dbLive ? "Live" : "Scheduled") : dbLive ? "Live" : "Scheduled";
+    const pulseLive = dbLive;
 
     return (
       <div className="min-h-[100dvh] flex flex-col px-6 pb-12 font-['Inter']" style={{ background: BG, color: FG }}>
@@ -372,29 +406,38 @@ export default function MehfilRoomPage() {
           {session.isHost ? (
             <motion.button
               type="button"
-              whileTap={{ scale: 0.97 }}
-              onClick={() => void session.joinRoom()}
-              className="px-12 py-3.5 rounded-full text-[15px] font-medium border border-white/[0.12]"
-              style={{ background: "rgba(255,255,255,0.06)", color: FG }}
+              whileTap={{ scale: startMehfilMut.isPending ? 1 : 0.97 }}
+              disabled={startMehfilMut.isPending}
+              onClick={() => {
+                startMehfilMut.mutate(id, {
+                  onSuccess: () => {
+                    void session.joinRoom();
+                  },
+                  onError: (err: Error) => toast.error(err.message || "Could not start"),
+                });
+              }}
+              className="px-12 py-3.5 rounded-full text-[15px] font-semibold border border-white/[0.14]"
+              style={{
+                background: `linear-gradient(135deg,${GOLD},#e08055)`,
+                color: BG,
+                opacity: startMehfilMut.isPending ? 0.75 : 1,
+              }}
             >
-              Enter studio
+              {startMehfilMut.isPending ? "Starting…" : "Start the mehfil"}
             </motion.button>
           ) : (
             <motion.button
               type="button"
-              whileTap={{ scale: listenerCanEnter ? 0.97 : 1 }}
-              disabled={!listenerCanEnter}
-              onClick={() => {
-                if (listenerCanEnter) void session.joinRoom();
-              }}
+              whileTap={{ scale: 1 }}
+              disabled
               className="px-12 py-3.5 rounded-full text-[15px] font-medium transition-opacity"
               style={{
-                background: listenerCanEnter ? `linear-gradient(135deg,${GOLD},#f76a4a)` : "rgba(255,255,255,0.06)",
-                color: listenerCanEnter ? BG : "rgba(245,243,239,0.35)",
-                opacity: listenerCanEnter ? 1 : 0.88,
+                background: "rgba(255,255,255,0.06)",
+                color: "rgba(245,243,239,0.35)",
+                opacity: 0.88,
               }}
             >
-              {listenerCanEnter ? "Join gathering" : "Waiting for host"}
+              Waiting for host
             </motion.button>
           )}
         </div>
@@ -412,7 +455,7 @@ export default function MehfilRoomPage() {
   );
 
   const dbLiveRoom = mehfil.isLive;
-  const livePulse = dbLiveRoom || (session.isHost && hostGoingLive);
+  const livePulse = dbLiveRoom;
 
   return (
     <motion.div
@@ -517,15 +560,6 @@ export default function MehfilRoomPage() {
       <AnimatePresence>
         {session.hostMenuOpen && session.isHost && (
           <motion.div initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="absolute top-[72px] right-5 z-50 w-52 rounded-2xl border border-white/10 overflow-hidden shadow-xl" style={{ background: "#141018" }}>
-            {!dbLiveRoom && (
-              <button type="button" className="w-full text-left px-4 py-3 text-[13px]" style={{ color: GOLD }} onClick={() => {
-                setHostGoingLive(true);
-                startMehfilMut.mutate(id, {
-                  onSettled: () => setHostGoingLive(false),
-                });
-                session.setHostMenuOpen(false);
-              }}><Radio size={14} className="inline mr-2" />Go live</button>
-            )}
             {session.activeSpeaker && (
               <button type="button" className="w-full text-left px-4 py-3 text-[13px] border-t border-white/[0.06]" onClick={() => { endTurnMut.mutate(id); session.setHostMenuOpen(false); }}><MicOff size={14} className="inline mr-2 opacity-70" />End turn</button>
             )}
@@ -537,9 +571,9 @@ export default function MehfilRoomPage() {
         )}
       </AnimatePresence>
 
-      <main className="relative z-10 flex-1 flex flex-col items-center px-6 pt-2 pb-4">
+      <main className="relative z-10 flex-1 flex flex-col items-center min-h-0 px-6 pt-1 pb-3">
         {session.studio ? (
-          <div className="relative mb-5 w-full max-w-[360px] mx-auto">
+          <div className="relative mb-4 w-full max-w-[340px] mx-auto shrink-0">
             <motion.div
               className="pointer-events-none absolute rounded-[36px]"
               style={{
@@ -550,25 +584,41 @@ export default function MehfilRoomPage() {
               animate={{ opacity: livePulse ? [0.42, 0.78, 0.42] : 0.26 }}
               transition={{ duration: livePulse ? 2.8 : 4, repeat: Infinity, ease: "easeInOut" }}
             />
-            <div className="relative mx-auto w-full aspect-[9/16] max-h-[54vh] rounded-[30px] overflow-hidden ring-1 ring-white/12 shadow-[0_42px_120px_rgba(0,0,0,0.72)] bg-black/50">
+            <div className="relative mx-auto w-full aspect-[9/16] max-h-[48vh] rounded-[30px] overflow-hidden ring-1 ring-white/12 shadow-[0_42px_120px_rgba(0,0,0,0.72)] bg-[#120e14]">
+              {(host?.avatarUrl || mehfil.coverUrl) ? (
+                <div
+                  className="pointer-events-none absolute inset-0 z-0 scale-[1.08]"
+                  style={{
+                    backgroundImage: `url(${host?.avatarUrl || mehfil.coverUrl})`,
+                    backgroundSize: "cover",
+                    backgroundPosition: "center",
+                    filter: "blur(36px) saturate(1.12)",
+                    opacity: session.isHost ? (session.hostCameraOn ? 0.42 : 0.72) : 0.65,
+                  }}
+                  aria-hidden
+                />
+              ) : (
+                <div className="pointer-events-none absolute inset-0 z-0 bg-gradient-to-b from-[#1c1420] via-[#0f0a12] to-black" aria-hidden />
+              )}
+              <div className="pointer-events-none absolute inset-0 z-[1] bg-gradient-to-t from-black/50 via-transparent to-black/20" aria-hidden />
               {session.isHost ? (
                 <>
-                  <div ref={localVidRef} className="absolute inset-0 w-full h-full" />
+                  <div ref={localVidRef} className="absolute inset-0 z-[2] w-full h-full" />
                   {!session.hostCameraOn && (
-                    <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-gradient-to-t from-black/65 via-black/25 to-transparent">
+                    <div className="absolute inset-0 z-[3] flex flex-col items-center justify-center gap-4 bg-gradient-to-t from-black/72 via-black/35 to-transparent">
                       {(host?.avatarUrl || mehfil.coverUrl) ? (
-                        <img src={host?.avatarUrl || mehfil.coverUrl} alt="" className="w-[76px] h-[76px] rounded-full object-cover ring-2 ring-white/12 opacity-85" />
+                        <img src={host?.avatarUrl || mehfil.coverUrl} alt="" className="w-[76px] h-[76px] rounded-full object-cover ring-2 ring-[rgba(201,168,76,0.35)] shadow-[0_0_40px_rgba(201,168,76,0.22)] opacity-92" />
                       ) : (
-                        <div className="w-[76px] h-[76px] rounded-full flex items-center justify-center font-['Playfair_Display'] text-2xl opacity-35 bg-white/[0.06]">
+                        <div className="w-[76px] h-[76px] rounded-full flex items-center justify-center font-['Playfair_Display'] text-2xl opacity-55 bg-white/[0.08] ring-1 ring-white/12">
                           {(host?.displayName ?? mehfil.title).charAt(0)}
                         </div>
                       )}
-                      <p className="text-[10px] font-['Inter'] uppercase tracking-[0.28em]" style={{ color: "rgba(245,243,239,0.32)" }}>Audio-only · camera paused</p>
+                      <p className="text-[10px] font-['Inter'] uppercase tracking-[0.28em]" style={{ color: "rgba(245,243,239,0.38)" }}>Camera off · voice carries</p>
                     </div>
                   )}
                 </>
               ) : (
-                <div ref={remoteVidRef} className="absolute inset-0 w-full h-full bg-gradient-to-b from-white/[0.04] to-black/45" />
+                <div ref={remoteVidRef} className="absolute inset-0 z-[2] w-full h-full" />
               )}
             </div>
           </div>
@@ -625,7 +675,7 @@ export default function MehfilRoomPage() {
         ))}
       </div>
 
-      <div className="relative z-10 mx-5 flex-1 min-h-[11rem] max-h-[38vh] rounded-2xl border border-white/[0.06] bg-black/30 overflow-hidden flex flex-col backdrop-blur-sm">
+      <div className="relative z-10 mx-5 flex-1 min-h-[9.5rem] max-h-[min(34vh,280px)] rounded-2xl border border-white/[0.06] bg-black/30 overflow-hidden flex flex-col backdrop-blur-sm">
         {dock === "chat" ? (
           <>
             <div ref={session.chatRef} className="flex-1 overflow-y-auto px-3 py-2 space-y-1.5 text-[12px]">
@@ -700,18 +750,21 @@ export default function MehfilRoomPage() {
       {session.joined && (
         <motion.button
           type="button"
-          className="fixed z-[25] pointer-events-auto flex items-center gap-2 px-4 py-3 rounded-full border border-white/[0.12] bg-black/38 backdrop-blur-2xl shadow-[0_18px_52px_rgba(0,0,0,0.48)]"
+          className="fixed z-[35] pointer-events-auto flex items-center gap-2 pr-4 pl-3.5 py-2.5 rounded-full border border-white/[0.14] bg-black/58 backdrop-blur-2xl shadow-[0_16px_44px_rgba(0,0,0,0.55)]"
           style={{
-            left: "max(env(safe-area-inset-left), 18px)",
-            bottom: "calc(env(safe-area-inset-bottom) + 108px)",
+            right: "max(env(safe-area-inset-right), 14px)",
+            left: "auto",
+            bottom: "calc(env(safe-area-inset-bottom) + 92px)",
           }}
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
           whileTap={{ scale: 0.97 }}
           onClick={() => session.setSupportOpen(true)}
         >
-          <Coffee size={15} style={{ color: GOLD }} className="opacity-90" />
-          <span className="text-[11px] font-['Inter'] tracking-[0.06em]" style={{ color: "rgba(245,243,239,0.78)" }}>Appreciate</span>
+          <Coffee size={15} style={{ color: GOLD }} className="opacity-95 shrink-0" />
+          <span className="text-[11px] font-['Inter'] font-semibold tracking-[0.04em] text-[rgba(252,248,242,0.94)]">
+            Appreciate
+          </span>
         </motion.button>
       )}
 

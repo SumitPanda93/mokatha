@@ -34,8 +34,8 @@ export interface LiveKitRoom {
   isAudioBlocked: () => boolean;
   /** Manually re-sync remote audio attachments + playback (tab focus, recovery). */
   primeRemotePlayback: (reason: string) => void;
-  /** Attach studio layouts — safe to call after mount; re-run when refs settle (mobile). */
-  bindVideoElements(opts: { local?: HTMLElement | null; remote?: HTMLElement | null }): void;
+  /** Attach studio mounts — pass only keys you have; omit keys to avoid wiping mounts when refs are briefly null. */
+  bindVideoElements(opts: Partial<{ local: HTMLElement | null; remote: HTMLElement | null }>): void;
   setCameraEnabled: (enabled: boolean) => Promise<void>;
 }
 
@@ -126,7 +126,10 @@ export async function connectToMehfil(
   }
 
   const publishCamera = Boolean(canPublish && opts.publishCamera);
-  const remoteHostId = opts.remoteHostIdentity ?? null;
+  const remoteHostIdRaw = opts.remoteHostIdentity ?? null;
+  /** Normalize LiveKit participant identity vs DB UUID (case / whitespace drift). */
+  const normId = (id: string) => id.trim().toLowerCase();
+  const remoteHostIdNorm = remoteHostIdRaw ? normId(remoteHostIdRaw) : null;
 
   const roomOpts: RoomOptions = {
     adaptiveStream: true,
@@ -173,8 +176,17 @@ export async function connectToMehfil(
     }
   }
 
+  function stylePortraitVideo(el: HTMLVideoElement) {
+    el.playsInline = true;
+    el.setAttribute("playsinline", "true");
+    el.style.width = "100%";
+    el.style.height = "100%";
+    el.style.objectFit = "cover";
+    el.style.display = "block";
+  }
+
   function mountRemoteVideo(track: RemoteTrack, publication: RemoteTrackPublication, participantIdentity: string) {
-    if (!remoteHostId || participantIdentity !== remoteHostId || track.kind !== Track.Kind.Video) return;
+    if (!remoteHostIdNorm || normId(participantIdentity) !== remoteHostIdNorm || track.kind !== Track.Kind.Video) return;
     if (!remoteVideoMount) return;
     const sid = publication.trackSid;
     try {
@@ -188,8 +200,7 @@ export async function connectToMehfil(
       });
       remoteVideoBySid.clear();
       const el = track.attach() as HTMLVideoElement;
-      el.playsInline = true;
-      el.setAttribute("playsinline", "true");
+      stylePortraitVideo(el);
       el.muted = true;
       remoteVideoMount.replaceChildren(el);
       remoteVideoBySid.set(sid, el);
@@ -200,29 +211,33 @@ export async function connectToMehfil(
   }
 
   function syncPublishedVideos(reason: string) {
-    if (remoteHostId && remoteVideoMount) {
+    if (remoteHostIdNorm && remoteVideoMount) {
       room.remoteParticipants.forEach((participant) => {
-        if (participant.identity !== remoteHostId) return;
+        if (normId(participant.identity) !== remoteHostIdNorm) return;
         participant.trackPublications.forEach((pub) => {
           const rp = pub as RemoteTrackPublication;
-          if (rp.kind !== Track.Kind.Video || !rp.track || !rp.isSubscribed) return;
-          mountRemoteVideo(rp.track as RemoteTrack, rp, participant.identity);
+          if (rp.kind !== Track.Kind.Video) return;
+          ensureRemoteVideoSubscribed(rp, participant.identity);
+          if (rp.track && rp.isSubscribed) {
+            mountRemoteVideo(rp.track as RemoteTrack, rp, participant.identity);
+          }
         });
       });
     }
     if (localVideoMount && canPublish) {
+      localVideoMount.replaceChildren();
+      localVideoBySid.clear();
       let attachedAny = false;
       room.localParticipant.videoTrackPublications.forEach((pub) => {
         const vt = pub.track;
-        if (!vt || pub.isMuted) return;
-        attachedAny = true;
+        if (!vt || pub.isMuted || attachedAny) return;
         try {
-          localVideoMount.replaceChildren();
           const el = vt.attach() as HTMLVideoElement;
-          el.playsInline = true;
+          stylePortraitVideo(el);
           localVideoMount.appendChild(el);
           localVideoBySid.set(pub.trackSid, el);
           void el.play().catch(() => {});
+          attachedAny = true;
         } catch {
           /* ignore */
         }
@@ -336,7 +351,7 @@ export async function connectToMehfil(
 
   function ensureRemoteVideoSubscribed(pub: RemoteTrackPublication, participantIdentity: string) {
     if (pub.kind !== Track.Kind.Video) return;
-    if (!remoteHostId || participantIdentity !== remoteHostId) return;
+    if (!remoteHostIdNorm || normId(participantIdentity) !== remoteHostIdNorm) return;
     try {
       if (!pub.isSubscribed) pub.setSubscribed(true);
     } catch (e) {
@@ -555,10 +570,14 @@ export async function connectToMehfil(
   });
 
   try {
-    await room.connect(LIVEKIT_URL, token);
+    await room.connect(LIVEKIT_URL, token, { autoSubscribe: true });
     console.log(`[LiveKit] connected to room ${roomId} as ${userId}`);
     logOpsEvent("livekit_connected", { room_id: roomId, can_publish: canPublish });
     audioLog("connected", { room_id: roomId, can_publish: canPublish, identity: userId });
+    if (import.meta.env.DEV && remoteHostIdNorm) {
+      const ids = [...room.remoteParticipants.values()].map((p) => normId(p.identity));
+      console.debug("[LiveKit:dev] remote identities", { expect_host: remoteHostIdNorm, remote_participants: ids });
+    }
 
     await room.startAudio().catch(() => {});
 
@@ -703,9 +722,9 @@ export async function connectToMehfil(
       schedulePlaybackRetries(reason);
     },
 
-    bindVideoElements(opts: { local?: HTMLElement | null; remote?: HTMLElement | null }) {
-      if ("local" in opts) localVideoMount = opts.local ?? null;
-      if ("remote" in opts) remoteVideoMount = opts.remote ?? null;
+    bindVideoElements(opts: Partial<{ local: HTMLElement | null; remote: HTMLElement | null }>) {
+      if (opts.local != null) localVideoMount = opts.local;
+      if (opts.remote != null) remoteVideoMount = opts.remote;
       syncPublishedVideos("bind_video_elements");
     },
 
