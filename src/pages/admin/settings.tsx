@@ -41,6 +41,7 @@ export default function AdminSettings() {
   const [maxAudioMb, setMaxAudioMb] = useState<number | null>(null);
   const [maxAvatarMb, setMaxAvatarMb] = useState<number | null>(null);
   const [reelPosterW, setReelPosterW] = useState<number | null>(null);
+  const [reelMaxDurationSec, setReelMaxDurationSec] = useState<number | null>(null);
 
   // Hydrate local sliders from DB once loaded
   const effectiveMaxSupport  = maxSupport  ?? config?.max_support_amount  ?? 5;
@@ -52,6 +53,8 @@ export default function AdminSettings() {
   const effectiveMaxAudioMb = maxAudioMb ?? config?.max_upload_audio_mb ?? 100;
   const effectiveMaxAvatarMb = maxAvatarMb ?? config?.max_upload_avatar_mb ?? 5;
   const effectiveReelPosterW = reelPosterW ?? config?.reel_poster_width_px ?? 720;
+  const effectiveReelMaxDurationSec =
+    reelMaxDurationSec ?? config?.reel_max_duration_sec ?? 120;
 
   const savePlatform = () => toast.success("Platform settings saved");
 
@@ -72,6 +75,7 @@ export default function AdminSettings() {
         setAdminConfig("max_upload_audio_mb", String(effectiveMaxAudioMb)),
         setAdminConfig("max_upload_avatar_mb", String(effectiveMaxAvatarMb)),
         setAdminConfig("reel_poster_width_px", String(effectiveReelPosterW)),
+        setAdminConfig("reel_max_duration_sec", String(effectiveReelMaxDurationSec)),
       ]);
       await qc.invalidateQueries({ queryKey: ["adminConfig"] });
       toast.success("Media limits saved");
@@ -233,6 +237,20 @@ export default function AdminSettings() {
                     <input type="number" min={320} max={4096} step={10} value={effectiveReelPosterW}
                       onChange={(e) => setReelPosterW(Number(e.target.value))}
                       className="w-[5rem] shrink-0 bg-[#1A1A1A] border border-[#2A2A2A] rounded-lg px-3 py-2 text-[13px] outline-none text-right" />
+                  </div>
+                </div>
+
+                <div className="px-4 py-3.5">
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <div className="text-[13px] mb-0.5">Max reel clip length</div>
+                      <div className="text-[11px] text-[#A0A0A0] leading-relaxed">
+                        Longest segment creators can publish (trim end − start), in seconds. Range 5–600; typical short-form values are 60–180.
+                      </div>
+                    </div>
+                    <input type="number" min={5} max={600} step={1} value={effectiveReelMaxDurationSec}
+                      onChange={(e) => setReelMaxDurationSec(Number(e.target.value))}
+                      className="w-[4.5rem] shrink-0 bg-[#1A1A1A] border border-[#2A2A2A] rounded-lg px-3 py-2 text-[13px] outline-none text-right" />
                   </div>
                 </div>
 

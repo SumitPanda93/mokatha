@@ -3,8 +3,27 @@ import { useLocation } from "wouter";
 import { motion } from "framer-motion";
 import { ArrowLeft, Video, Loader2, X } from "lucide-react";
 import { useTitle } from "@/hooks/useTitle";
-import { useAddPost, getCurrentUserId, uploadReelVideoFile, getAdminConfig, uploadReelPosterJpeg } from "@/lib/store";
+import { useAddPost, getCurrentUserId, uploadReelVideoFile, getAdminConfig, uploadReelPosterJpeg, useAdminConfig } from "@/lib/store";
 import { toast } from "sonner";
+
+const MIN_REEL_SEG = 0.35;
+
+/** Keep trim segment within [MIN_REEL_SEG, maxSeg] and inside [0, dur]. */
+function clampReelTrim(start: number, end: number, dur: number, maxSeg: number): { ts: number; te: number } {
+  const maxSegSafe = Math.max(MIN_REEL_SEG, maxSeg);
+  let te = Math.min(dur, end);
+  let ts = Math.max(0, start);
+  if (te - ts < MIN_REEL_SEG) te = Math.min(dur, ts + MIN_REEL_SEG);
+  if (te - ts > maxSegSafe) {
+    te = Math.min(dur, ts + maxSegSafe);
+    if (te - ts < MIN_REEL_SEG) {
+      ts = Math.max(0, dur - MIN_REEL_SEG);
+      te = Math.min(dur, ts + maxSegSafe);
+    }
+  }
+  if (ts > te - MIN_REEL_SEG) ts = Math.max(0, te - MIN_REEL_SEG);
+  return { ts, te };
+}
 
 async function capturePosterFromVideoUrl(videoUrl: string, atSec: number, posterWidthPx: number): Promise<Blob | null> {
   return new Promise((resolve) => {
@@ -71,6 +90,23 @@ export default function CreateReel() {
   const [minTip, setMinTip] = useState(10);
 
   const add = useAddPost();
+  const { data: adminCfg } = useAdminConfig();
+  const reelMaxSec = adminCfg?.reel_max_duration_sec ?? 120;
+
+  const trimRef = useRef({ start: 0, end: 0 });
+  useEffect(() => {
+    trimRef.current = { start: trimStart, end: trimEnd };
+  }, [trimStart, trimEnd]);
+
+  useEffect(() => {
+    if (mediaDuration <= 0) return;
+    const { start: s, end: e } = trimRef.current;
+    const { ts, te } = clampReelTrim(s, e, mediaDuration, reelMaxSec);
+    if (Math.abs(ts - s) > 0.02 || Math.abs(te - e) > 0.02) {
+      setTrimStart(ts);
+      setTrimEnd(te);
+    }
+  }, [mediaDuration, reelMaxSec]);
 
   const pickGallery = () => videoInputRef.current?.click();
   const pickCamera = () => cameraInputRef.current?.click();
@@ -78,8 +114,8 @@ export default function CreateReel() {
   useEffect(() => {
     const pv = previewVideoRef.current;
     if (!pv || !videoPreview || mediaDuration <= 0) return;
-    const start = Math.min(trimStart, trimEnd - 0.25);
-    const end = Math.max(trimEnd, start + 0.25);
+    const start = Math.min(trimStart, trimEnd - MIN_REEL_SEG);
+    const end = Math.max(trimEnd, start + MIN_REEL_SEG);
     const onTime = () => {
       if (pv.currentTime >= end - 0.06) pv.currentTime = start;
     };
@@ -127,16 +163,22 @@ export default function CreateReel() {
       toast.error("Add a video first");
       return;
     }
+    const cfg = await getAdminConfig();
+    const maxSec = cfg.reel_max_duration_sec;
+    const clipLen = trimEnd - trimStart;
+    if (clipLen > maxSec + 0.05) {
+      toast.error(`Reel clip must be ${maxSec}s or shorter. Tighten the trim handles.`);
+      return;
+    }
     let coverUrl = "";
     try {
-      const cfg = await getAdminConfig();
       const blob = await capturePosterFromVideoUrl(videoUrl, trimStart, cfg.reel_poster_width_px);
       if (blob) coverUrl = await uploadReelPosterJpeg(me, blob);
     } catch {
       /* poster optional */
     }
     const tags = ["reel"] as string[];
-    if (mediaDuration > 0.5 && trimEnd - trimStart >= 0.35 && trimEnd <= mediaDuration + 0.01) {
+    if (mediaDuration > 0.5 && trimEnd - trimStart >= MIN_REEL_SEG && trimEnd <= mediaDuration + 0.01) {
       tags.push(`trim:${trimStart.toFixed(2)}:${trimEnd.toFixed(2)}`);
     }
     add.mutate(
@@ -190,8 +232,10 @@ export default function CreateReel() {
                   const d = e.currentTarget.duration;
                   if (Number.isFinite(d) && d > 0) {
                     setMediaDuration(d);
-                    setTrimEnd(d);
-                    setTrimStart(0);
+                    const maxSeg = reelMaxSec;
+                    const { ts, te } = clampReelTrim(0, Math.min(d, maxSeg), d, maxSeg);
+                    setTrimStart(ts);
+                    setTrimEnd(te);
                   }
                 }}
               />
@@ -231,24 +275,39 @@ export default function CreateReel() {
 
         {videoPreview && mediaDuration > 0.8 && (
           <div className="w-full max-w-[320px] space-y-2">
+            <div className="text-[11px] text-muted-foreground flex justify-between gap-2">
+              <span>
+                Clip · {(trimEnd - trimStart).toFixed(1)}s · max {reelMaxSec}s
+              </span>
+            </div>
             <div className="text-[11px] text-muted-foreground">Trim · start {trimStart.toFixed(1)}s</div>
             <input
               type="range"
-              min={0}
-              max={Math.max(0, trimEnd - 0.35)}
+              min={Math.max(0, trimEnd - reelMaxSec)}
+              max={Math.max(MIN_REEL_SEG, trimEnd - MIN_REEL_SEG)}
               step={0.05}
-              value={Math.min(trimStart, trimEnd - 0.35)}
-              onChange={(e) => setTrimStart(Number(e.target.value))}
+              value={Math.min(Math.max(trimStart, Math.max(0, trimEnd - reelMaxSec)), trimEnd - MIN_REEL_SEG)}
+              onChange={(e) => {
+                const v = Number(e.target.value);
+                const { ts, te } = clampReelTrim(v, trimEnd, mediaDuration, reelMaxSec);
+                setTrimStart(ts);
+                setTrimEnd(te);
+              }}
               className="w-full accent-foreground"
             />
             <div className="text-[11px] text-muted-foreground">Trim · end {trimEnd.toFixed(1)}s</div>
             <input
               type="range"
-              min={trimStart + 0.35}
-              max={mediaDuration}
+              min={trimStart + MIN_REEL_SEG}
+              max={Math.min(mediaDuration, trimStart + reelMaxSec)}
               step={0.05}
-              value={Math.max(trimEnd, trimStart + 0.35)}
-              onChange={(e) => setTrimEnd(Number(e.target.value))}
+              value={Math.min(Math.max(trimEnd, trimStart + MIN_REEL_SEG), Math.min(mediaDuration, trimStart + reelMaxSec))}
+              onChange={(e) => {
+                const v = Number(e.target.value);
+                const { ts, te } = clampReelTrim(trimStart, v, mediaDuration, reelMaxSec);
+                setTrimStart(ts);
+                setTrimEnd(te);
+              }}
               className="w-full accent-foreground"
             />
           </div>

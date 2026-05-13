@@ -2439,6 +2439,8 @@ export type AdminConfig = {
   max_upload_avatar_mb: number;
   /** JPEG width when generating reel cover from video frame */
   reel_poster_width_px: number;
+  /** Maximum published reel clip length (trim end − start), seconds */
+  reel_max_duration_sec: number;
 };
 
 const ADMIN_CONFIG_DEFAULTS: AdminConfig = {
@@ -2450,6 +2452,7 @@ const ADMIN_CONFIG_DEFAULTS: AdminConfig = {
   max_upload_audio_mb: 100,
   max_upload_avatar_mb: 5,
   reel_poster_width_px: 720,
+  reel_max_duration_sec: 120,
 };
 
 function clampAdminInt(raw: unknown, lo: number, hi: number, fallback: number): number {
@@ -2543,6 +2546,7 @@ export async function getAdminConfig(): Promise<AdminConfig> {
     max_upload_audio_mb: clampAdminInt(m.max_upload_audio_mb, 1, 512, ADMIN_CONFIG_DEFAULTS.max_upload_audio_mb),
     max_upload_avatar_mb: clampAdminInt(m.max_upload_avatar_mb, 1, 50, ADMIN_CONFIG_DEFAULTS.max_upload_avatar_mb),
     reel_poster_width_px: clampAdminInt(m.reel_poster_width_px, 320, 4096, ADMIN_CONFIG_DEFAULTS.reel_poster_width_px),
+    reel_max_duration_sec: clampAdminInt(m.reel_max_duration_sec, 5, 600, ADMIN_CONFIG_DEFAULTS.reel_max_duration_sec),
   };
 }
 
