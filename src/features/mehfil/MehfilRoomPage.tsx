@@ -268,6 +268,10 @@ export default function MehfilRoomPage() {
   }, [session.isHost, mehfil?.isLive, session.lkConnected, id]);
 
   useEffect(() => {
+    if (session.isHost && session.supportOpen) session.setSupportOpen(false);
+  }, [session.isHost, session.supportOpen, session.setSupportOpen]);
+
+  useEffect(() => {
     if (!session.joined) return;
     let cancelled = false;
     const bind = () => {
@@ -747,7 +751,7 @@ export default function MehfilRoomPage() {
         )}
       </div>
 
-      {session.joined && (
+      {session.joined && !session.isHost && (
         <motion.button
           type="button"
           className="fixed z-[35] pointer-events-auto flex items-center gap-2 pr-4 pl-3.5 py-2.5 rounded-full border border-white/[0.14] bg-black/58 backdrop-blur-2xl shadow-[0_16px_44px_rgba(0,0,0,0.55)]"
@@ -770,7 +774,9 @@ export default function MehfilRoomPage() {
 
       <footer className="relative z-10 flex justify-center px-4 pt-3 pb-[max(env(safe-area-inset-bottom),16px)] pointer-events-none">
         <div className="pointer-events-auto flex items-center gap-2 px-3 py-2 rounded-[999px] border border-white/[0.06] bg-black/40 backdrop-blur-2xl shadow-[0_12px_42px_rgba(0,0,0,0.42)]">
-          <motion.button type="button" whileTap={{ scale: 0.96 }} onClick={() => session.setSupportOpen(true)} className="px-4 py-2.5 rounded-full text-[12px] border border-white/[0.08] bg-white/[0.05]">Chai</motion.button>
+          {!session.isHost && (
+            <motion.button type="button" whileTap={{ scale: 0.96 }} onClick={() => session.setSupportOpen(true)} className="px-4 py-2.5 rounded-full text-[12px] border border-white/[0.08] bg-white/[0.05]">Chai</motion.button>
+          )}
           {session.canPublishNow && (
             <motion.button type="button" whileTap={{ scale: 0.96 }}
               onClick={async () => {
@@ -972,7 +978,7 @@ export default function MehfilRoomPage() {
       </AnimatePresence>
 
       <AnimatePresence>
-        {session.supportOpen && mehfil.hostId && (
+        {session.supportOpen && !session.isHost && mehfil.hostId && (
           <SupportSheet toUserId={mehfil.hostId} toUserName={host?.displayName ?? "Host"} mehfilId={id} onSupportSent={session.broadcastRoomSupport} onClose={() => session.setSupportOpen(false)} />
         )}
       </AnimatePresence>

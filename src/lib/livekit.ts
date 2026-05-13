@@ -63,6 +63,7 @@ const LIVEKIT_URL = import.meta.env.VITE_LIVEKIT_URL as string | undefined;
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string;
 
 const AUDIO_LOG_PREFIX = "[LiveKit:audio]";
+const MEDIA_LOG_PREFIX = "[LiveKit:media]";
 
 function audioLog(event: string, detail: Record<string, unknown> = {}) {
   const payload = { event, room_id: detail.room_id ?? "", ...detail };
@@ -78,6 +79,12 @@ function audioLog(event: string, detail: Record<string, unknown> = {}) {
   if (forwardOps.has(event)) {
     logOpsEvent(`livekit_${event}`, payload as Record<string, unknown>);
   }
+}
+
+/** DEV-only unified media pipeline tracing (subscribe / attach / playback). */
+function mediaLog(event: string, detail: Record<string, unknown> = {}) {
+  if (!import.meta.env.DEV) return;
+  console.info(MEDIA_LOG_PREFIX, { event, ...detail });
 }
 
 /** Fetch a LiveKit token from the Supabase edge function */
@@ -133,7 +140,8 @@ export async function connectToMehfil(
 
   const roomOpts: RoomOptions = {
     adaptiveStream: true,
-    dynacast: true,
+    /** Small rooms (Mehfil): disable dynacast for more predictable subscriber track delivery. */
+    dynacast: false,
     audioCaptureDefaults: {
       echoCancellation: true,
       noiseSuppression: true,
@@ -149,6 +157,25 @@ export async function connectToMehfil(
   let remoteVideoMount: HTMLElement | null = null;
   const localVideoBySid = new Map<string, HTMLVideoElement>();
   const remoteVideoBySid = new Map<string, HTMLVideoElement>();
+
+  /** Host camera sometimes arrives before React attaches remote `<div />`; replay attach once mount exists. */
+  let pendingHostVideo: {
+    track: RemoteTrack;
+    publication: RemoteTrackPublication;
+    participantIdentity: string;
+  } | null = null;
+
+  function clearPendingHostVideo() {
+    pendingHostVideo = null;
+  }
+
+  function tryFlushPendingHostVideo(reason: string) {
+    if (!pendingHostVideo || !remoteVideoMount) return;
+    const p = pendingHostVideo;
+    pendingHostVideo = null;
+    mediaLog("video_flush_pending", { reason, track_sid: p.publication.trackSid });
+    mountRemoteVideo(p.track, p.publication, p.participantIdentity);
+  }
 
   function clearVideos(containerChildrenOnly?: HTMLElement | null) {
     [...localVideoBySid.entries()].forEach(([sid, el]) => {
@@ -171,6 +198,7 @@ export async function connectToMehfil(
       }
       remoteVideoBySid.delete(sid);
     });
+    clearPendingHostVideo();
     if (containerChildrenOnly) {
       containerChildrenOnly.replaceChildren();
     }
@@ -187,7 +215,11 @@ export async function connectToMehfil(
 
   function mountRemoteVideo(track: RemoteTrack, publication: RemoteTrackPublication, participantIdentity: string) {
     if (!remoteHostIdNorm || normId(participantIdentity) !== remoteHostIdNorm || track.kind !== Track.Kind.Video) return;
-    if (!remoteVideoMount) return;
+    if (!remoteVideoMount) {
+      pendingHostVideo = { track, publication, participantIdentity };
+      mediaLog("video_deferred_until_mount", { track_sid: publication.trackSid, identity: participantIdentity });
+      return;
+    }
     const sid = publication.trackSid;
     try {
       remoteVideoBySid.forEach((el) => {
@@ -204,9 +236,15 @@ export async function connectToMehfil(
       el.muted = true;
       remoteVideoMount.replaceChildren(el);
       remoteVideoBySid.set(sid, el);
-      void el.play().catch(() => {});
-    } catch {
-      /* ignore */
+      mediaLog("video_attached", { track_sid: sid, identity: participantIdentity });
+      void el.play().catch((e) => {
+        mediaLog("video_play_failed", { track_sid: sid, message: e instanceof Error ? e.message : String(e) });
+      });
+    } catch (err) {
+      mediaLog("video_attach_failed", {
+        track_sid: sid,
+        message: err instanceof Error ? err.message : String(err),
+      });
     }
   }
 
@@ -297,10 +335,15 @@ export async function connectToMehfil(
 
   /** Try to play an audio element; set audioBlocked flag if policy prevents it. */
   function tryPlay(el: HTMLAudioElement) {
-    el.play().catch(() => {
+    el.play().catch((e) => {
       audioBlocked = true;
       callbacks.onAudioBlocked?.();
       audioLog("play_blocked", { room_id: roomId });
+      mediaLog("audio_play_failed", {
+        room_id: roomId,
+        message: e instanceof Error ? e.message : String(e),
+        track_sid: el.dataset.trackSid ?? "",
+      });
     });
   }
 
@@ -406,6 +449,7 @@ export async function connectToMehfil(
       from: participantIdentity,
       muted: publication.isMuted,
     });
+    mediaLog("audio_attached", { track_sid: sid, from: participantIdentity });
     tryPlay(el);
     primePlayback("track_subscribed");
     schedulePlaybackRetries("track_subscribed");
@@ -429,10 +473,12 @@ export async function connectToMehfil(
 
   room.on(RoomEvent.TrackSubscribed, (track: RemoteTrack, publication: RemoteTrackPublication, participant: RemoteParticipant) => {
     if (track.kind === Track.Kind.Audio) {
+      mediaLog("track_subscribed", { kind: "audio", track_sid: publication.trackSid, from: participant.identity });
       attachRemoteAudio(track, publication, participant.identity);
       return;
     }
     if (track.kind === Track.Kind.Video) {
+      mediaLog("track_subscribed", { kind: "video", track_sid: publication.trackSid, from: participant.identity });
       mountRemoteVideo(track, publication, participant.identity);
     }
   });
@@ -445,6 +491,7 @@ export async function connectToMehfil(
     }
     if (publication.kind === Track.Kind.Video) {
       ensureRemoteVideoSubscribed(publication, participant.identity);
+      mediaLog("remote_track_published", { kind: "video", track_sid: publication.trackSid, from: participant.identity });
     }
   });
 
@@ -460,22 +507,26 @@ export async function connectToMehfil(
       return;
     }
     if (publication.kind === Track.Kind.Video) {
+      if (pendingHostVideo?.publication.trackSid === publication.trackSid) clearPendingHostVideo();
       track.detach().forEach((node) => {
         const el = node as HTMLVideoElement;
         el.pause();
         el.remove();
       });
       remoteVideoBySid.delete(publication.trackSid);
+      mediaLog("track_unsubscribed", { kind: "video", track_sid: publication.trackSid });
     }
   });
 
   room.on(RoomEvent.TrackSubscriptionFailed, (trackSid: string, participant: RemoteParticipant, reason?: unknown) => {
+    const msg = typeof reason === "string" ? reason : reason instanceof Error ? reason.message : "";
     audioLog("subscription_failed", {
       room_id: roomId,
       track_sid: trackSid,
       from: participant.identity,
-      message: typeof reason === "string" ? reason : reason instanceof Error ? reason.message : "",
+      message: msg,
     });
+    mediaLog("subscription_failed", { track_sid: trackSid, from: participant.identity, message: msg });
     const pub = participant.getTrackPublicationBySid(trackSid) as RemoteTrackPublication | undefined;
     if (pub?.kind === Track.Kind.Audio) {
       window.setTimeout(() => ensureRemoteAudioSubscribed(pub, participant.identity), 400);
@@ -527,14 +578,17 @@ export async function connectToMehfil(
     logOpsEvent("livekit_reconnecting", { room_id: roomId });
     callbacks.onReconnecting?.();
     audioLog("reconnecting", { room_id: roomId });
+    mediaLog("reconnect_started", { room_id: roomId });
   });
 
   room.on(RoomEvent.Reconnected, () => {
     logOpsEvent("livekit_reconnected", { room_id: roomId });
     callbacks.onReconnected?.();
+    mediaLog("reconnect_completed", { room_id: roomId });
     void room.startAudio().catch(() => {});
     syncExistingRemoteAudio("reconnected");
     syncPublishedVideos("reconnected");
+    tryFlushPendingHostVideo("reconnected");
     audioElements.forEach((el) => {
       if (el.srcObject && el.paused) tryPlay(el);
     });
@@ -566,6 +620,7 @@ export async function connectToMehfil(
       el.remove();
     });
     clearVideos();
+    clearPendingHostVideo();
     audioLog("disconnected_cleanup", { room_id: roomId });
   });
 
@@ -587,30 +642,21 @@ export async function connectToMehfil(
     room.localParticipant.on(ParticipantEvent.TrackUnmuted, syncLocalMicUi);
     room.localParticipant.on(ParticipantEvent.LocalTrackPublished, (pub) => {
       if (pub.kind !== Track.Kind.Video) return;
+      mediaLog("local_track_published", { kind: "video", track_sid: pub.trackSid });
       syncPublishedVideos("local_video_pub");
     });
     syncLocalMicUi();
 
-    window.setTimeout(() => {
-      syncExistingRemoteAudio("post_connect_tick");
-      syncPublishedVideos("post_connect_tick");
-      schedulePlaybackRetries("post_connect");
-    }, 90);
-    window.setTimeout(() => {
-      syncExistingRemoteAudio("post_connect_400ms");
-      syncPublishedVideos("post_connect_400ms");
-    }, 400);
-    window.setTimeout(() => {
-      syncExistingRemoteAudio("post_connect_900ms");
-      syncPublishedVideos("post_connect_900ms");
-    }, 900);
-    window.setTimeout(() => {
-      syncExistingRemoteAudio("post_connect_2000ms");
-      syncPublishedVideos("post_connect_2000ms");
-    }, 2000);
-
-    window.setTimeout(() => primePlayback("post_connect_150ms"), 150);
-    window.setTimeout(() => primePlayback("post_connect_650ms"), 650);
+    const POST_CONNECT_RESYNC_MS = [0, 100, 320, 880, 2100];
+    for (const ms of POST_CONNECT_RESYNC_MS) {
+      window.setTimeout(() => {
+        syncExistingRemoteAudio(`post_connect_${ms}ms`);
+        syncPublishedVideos(`post_connect_${ms}ms`);
+        primePlayback(`post_connect_${ms}ms`);
+        tryFlushPendingHostVideo(`post_connect_${ms}ms`);
+      }, ms);
+    }
+    schedulePlaybackRetries("post_connect");
 
     document.addEventListener("visibilitychange", resumePlaybackOnVisible);
     window.addEventListener("online", resumePlaybackOnOnline);
@@ -654,6 +700,7 @@ export async function connectToMehfil(
   if (publishCamera && canPublish) {
     try {
       await room.localParticipant.setCameraEnabled(true);
+      mediaLog("local_camera_enabled", { room_id: roomId });
       window.setTimeout(() => syncPublishedVideos("camera_boot"), 220);
       window.setTimeout(() => syncPublishedVideos("camera_boot_late"), 1100);
     } catch (err) {
@@ -680,6 +727,7 @@ export async function connectToMehfil(
         el.remove();
       });
       clearVideos();
+      clearPendingHostVideo();
       room.disconnect();
     },
 
@@ -716,6 +764,7 @@ export async function connectToMehfil(
       void room.startAudio().catch(() => {});
       syncExistingRemoteAudio(reason);
       syncPublishedVideos(`${reason}_video`);
+      tryFlushPendingHostVideo(reason);
       audioElements.forEach((el) => {
         if (el.srcObject && el.paused) tryPlay(el);
       });
@@ -725,6 +774,11 @@ export async function connectToMehfil(
     bindVideoElements(opts: Partial<{ local: HTMLElement | null; remote: HTMLElement | null }>) {
       if (opts.local != null) localVideoMount = opts.local;
       if (opts.remote != null) remoteVideoMount = opts.remote;
+      mediaLog("bind_video_elements", {
+        has_local: opts.local != null,
+        has_remote: opts.remote != null,
+      });
+      tryFlushPendingHostVideo("bind_video_elements");
       syncPublishedVideos("bind_video_elements");
     },
 

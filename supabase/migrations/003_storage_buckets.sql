@@ -12,7 +12,8 @@ values
     array[
       'audio/webm', 'audio/ogg', 'audio/mp4', 'audio/mpeg', 'audio/wav',
       'audio/aac', 'audio/x-m4a',
-      'video/webm', 'video/mp4', 'video/ogg'
+      'video/webm', 'video/mp4', 'video/ogg',
+      'image/jpeg', 'image/jpg', 'image/png', 'image/webp'
     ]
   ),
   (

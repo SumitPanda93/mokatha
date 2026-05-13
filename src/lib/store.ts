@@ -1338,6 +1338,30 @@ export async function updateUser(userId: string, patch: Partial<User>): Promise<
   if (error) throw new Error(error.message);
 }
 
+const COVER_IMAGE_CONTENT_TYPES = new Set(["image/jpeg", "image/jpg", "image/png", "image/webp"]);
+
+/** Prefer browser-provided type; fall back from extension when Safari leaves `file.type` empty. */
+function inferCoverImageContentType(file: File): string {
+  const t = file.type?.trim().toLowerCase();
+  if (t && COVER_IMAGE_CONTENT_TYPES.has(t)) return t === "image/jpg" ? "image/jpeg" : t;
+  const ext = file.name.split(".").pop()?.toLowerCase();
+  if (ext === "png") return "image/png";
+  if (ext === "webp") return "image/webp";
+  if (ext === "jpg" || ext === "jpeg") return "image/jpeg";
+  return "image/jpeg";
+}
+
+function friendlyCoverImageUploadMessage(raw: string): string {
+  const m = raw.toLowerCase();
+  if (m.includes("mime type") || m.includes("invalid mime") || m.includes("not supported")) {
+    return "Couldn't upload image. Please try another file (JPEG, PNG, or WebP).";
+  }
+  if (m.includes("payload too large") || m.includes("too large") || m.includes("file size")) {
+    return "File is too large. Try a smaller image.";
+  }
+  return "Couldn't upload image. Please try again.";
+}
+
 export async function uploadAvatar(userId: string, file: File): Promise<string> {
   const cfg = await getAdminConfig();
   assertUploadWithinMb(file.size, cfg.max_upload_avatar_mb, "Avatar photo");
@@ -1351,12 +1375,21 @@ export async function uploadAvatar(userId: string, file: File): Promise<string> 
 
 /** Story / voice post cover images — `audio` bucket, covers/ prefix */
 export async function uploadPostCoverImage(userId: string, file: File): Promise<string> {
+  if (import.meta.env.DEV) {
+    console.info("[upload:cover] start", { name: file.name, type: file.type, size: file.size });
+  }
   const cfg = await getAdminConfig();
   assertUploadWithinMb(file.size, cfg.max_upload_audio_mb, "Cover image");
-  const ext = file.name.split(".").pop() ?? "jpg";
-  const path = `covers/${userId}/${Date.now()}.${ext}`;
-  const { error } = await supabase.storage.from("audio").upload(path, file, { upsert: true, contentType: file.type });
-  if (error) throw new Error(error.message);
+  const ext = file.name.split(".").pop()?.toLowerCase();
+  const safeExt = ext === "png" ? "png" : ext === "webp" ? "webp" : "jpg";
+  const path = `covers/${userId}/${Date.now()}.${safeExt}`;
+  const contentType = inferCoverImageContentType(file);
+  const { error } = await supabase.storage.from("audio").upload(path, file, { upsert: true, contentType });
+  if (error) {
+    if (import.meta.env.DEV) console.warn("[upload:cover] failed", error.message);
+    throw new Error(friendlyCoverImageUploadMessage(error.message));
+  }
+  if (import.meta.env.DEV) console.info("[upload:cover] ok", path);
   const { data } = supabase.storage.from("audio").getPublicUrl(path);
   return data.publicUrl;
 }
