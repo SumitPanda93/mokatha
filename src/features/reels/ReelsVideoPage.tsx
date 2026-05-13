@@ -71,6 +71,17 @@ function ReelItem({
   const hasPts = (ink?.points ?? 0) >= 50;
 
   const [videoSilent, setVideoSilent] = useState(false);
+  const [progPct, setProgPct] = useState(0);
+  const [localPaused, setLocalPaused] = useState(false);
+
+  const toggleCenterPlay = useCallback(() => {
+    const v = videoRef.current;
+    const a = audioRef.current;
+    const el = primaryVideo ? v : legacyAudio ? a : null;
+    if (!el || locked) return;
+    if (el.paused) void el.play().catch(() => {});
+    else el.pause();
+  }, [primaryVideo, legacyAudio, locked]);
 
   useEffect(() => {
     const v = videoRef.current;
@@ -148,6 +159,37 @@ function ReelItem({
     }
   }, [active, primaryVideo, legacyAudio, muted, post.id, locked, trim]);
 
+  useEffect(() => {
+    if (!active || locked) {
+      setProgPct(0);
+      return;
+    }
+    const v = videoRef.current;
+    const a = audioRef.current;
+    const el = primaryVideo ? v : legacyAudio ? a : null;
+    if (!el) {
+      setProgPct(0);
+      return;
+    }
+    const onTime = () => {
+      const d = el.duration;
+      const t = el.currentTime;
+      setProgPct(d > 0 && Number.isFinite(d) ? (t / d) * 100 : 0);
+    };
+    const syncPause = () => setLocalPaused(el.paused);
+    el.addEventListener("timeupdate", onTime);
+    el.addEventListener("loadedmetadata", onTime);
+    el.addEventListener("play", syncPause);
+    el.addEventListener("pause", syncPause);
+    syncPause();
+    return () => {
+      el.removeEventListener("timeupdate", onTime);
+      el.removeEventListener("loadedmetadata", onTime);
+      el.removeEventListener("play", syncPause);
+      el.removeEventListener("pause", syncPause);
+    };
+  }, [active, locked, primaryVideo, legacyAudio, post.id]);
+
   const ambient =
     !post.coverUrl && !primaryVideo
       ? "linear-gradient(165deg, #0e0717 0%, #1a0f2e 42%, #0a1020 72%, #120a1c 100%)"
@@ -194,25 +236,62 @@ function ReelItem({
         className="absolute inset-0 pointer-events-none z-[5]"
         style={{
           background:
-            "linear-gradient(to bottom, rgba(0,0,0,0.38) 0%, transparent 40%, rgba(0,0,0,0.48) 62%, rgba(0,0,0,0.9) 100%)",
+            "linear-gradient(to bottom, rgba(0,0,0,0.52) 0%, rgba(0,0,0,0.06) 28%, transparent 44%, transparent 58%, rgba(0,0,0,0.35) 74%, rgba(0,0,0,0.92) 100%)",
         }}
       />
 
-      <div className="absolute top-[max(env(safe-area-inset-top),12px)] right-4 z-40 flex flex-col gap-1 items-end pointer-events-auto">
-        <motion.button
-          type="button"
-          whileTap={{ scale: 0.92 }}
-          onClick={onToggleMute}
-          disabled={locked}
-          className="w-11 h-11 rounded-full backdrop-blur-md bg-black/35 border border-white/15 flex items-center justify-center disabled:opacity-35"
-          aria-label={muted ? "Unmute" : "Mute"}
-        >
-          {muted ? <VolumeX size={18} className="text-white" /> : <Volume2 size={18} className="text-white" />}
-        </motion.button>
-        {primaryVideo && videoSilent && !locked && (
-          <span className="text-[8px] font-['Inter'] tracking-[0.24em] uppercase text-white/28 pr-1">visual</span>
+      {/* TOP — creator identity only */}
+      <div className="absolute top-[calc(env(safe-area-inset-top)+46px)] left-4 right-4 z-30 flex items-center justify-between gap-3 pointer-events-auto">
+        {author?.handle ? (
+          <Link href={`/u/${author.handle}`} className="flex items-center gap-2.5 min-w-0 rounded-full pr-2 py-1 pl-1 bg-black/28 backdrop-blur-md border border-white/[0.09]">
+            <div className="w-9 h-9 rounded-full overflow-hidden shrink-0 ring-1 ring-white/12 bg-white/10">
+              {author?.avatarUrl ? <img src={author.avatarUrl} alt="" className="w-full h-full object-cover" /> : null}
+            </div>
+            <div className="min-w-0 text-left">
+              <div className="text-[13px] font-['Playfair_Display'] text-white leading-tight truncate max-w-[52vw]">{author?.displayName ?? "Creator"}</div>
+              <div className="text-[8px] font-['Inter'] uppercase tracking-[0.32em] text-white/38">Reel</div>
+            </div>
+          </Link>
+        ) : (
+          <div className="flex items-center gap-2.5 min-w-0 rounded-full pr-2 py-1 pl-1 bg-black/28 backdrop-blur-md border border-white/[0.09]">
+            <div className="w-9 h-9 rounded-full overflow-hidden shrink-0 ring-1 ring-white/12 bg-white/10" />
+            <div className="min-w-0 text-left">
+              <div className="text-[13px] font-['Playfair_Display'] text-white leading-tight truncate max-w-[52vw]">{author?.displayName ?? "Creator"}</div>
+              <div className="text-[8px] font-['Inter'] uppercase tracking-[0.32em] text-white/38">Reel</div>
+            </div>
+          </div>
         )}
+        <div className="flex flex-col items-end gap-1 shrink-0">
+          <motion.button
+            type="button"
+            whileTap={{ scale: 0.92 }}
+            onClick={onToggleMute}
+            disabled={locked || (!primaryVideo && !legacyAudio)}
+            className="w-10 h-10 rounded-full backdrop-blur-md bg-black/38 border border-white/12 flex items-center justify-center disabled:opacity-35"
+            aria-label={muted ? "Unmute" : "Mute"}
+          >
+            {muted ? <VolumeX size={17} className="text-white/95" /> : <Volume2 size={17} className="text-white/95" />}
+          </motion.button>
+          {primaryVideo && videoSilent && !locked ? (
+            <span className="text-[7px] font-['Inter'] tracking-[0.28em] uppercase text-white/22">visual</span>
+          ) : null}
+        </div>
       </div>
+
+      {/* CENTER — floating transport (no typography overlap) */}
+      {active && !locked && (primaryVideo || legacyAudio) ? (
+        <div className="absolute inset-0 z-[26] flex items-center justify-center pointer-events-none">
+          <motion.button
+            type="button"
+            whileTap={{ scale: 0.93 }}
+            onClick={toggleCenterPlay}
+            className="pointer-events-auto w-[72px] h-[72px] rounded-full backdrop-blur-xl bg-black/38 border border-white/16 flex items-center justify-center shadow-[0_20px_60px_rgba(0,0,0,0.45)]"
+            aria-label={localPaused ? "Play" : "Pause"}
+          >
+            {localPaused ? <Play size={28} className="text-white ml-1" fill="white" /> : <Pause size={28} className="text-white" />}
+          </motion.button>
+        </div>
+      ) : null}
 
       {locked && (
         <div className="absolute inset-0 z-[28] flex flex-col items-center justify-center px-7 pointer-events-none">
@@ -273,36 +352,29 @@ function ReelItem({
         </div>
       )}
 
-      <div className="absolute bottom-0 left-0 right-0 z-10 px-5 pb-[max(env(safe-area-inset-bottom),28px)] pt-16 flex flex-col justify-end pointer-events-none">
-        <div className={`pointer-events-auto space-y-4 ${locked ? "opacity-35" : ""}`}>
-          <div className="flex items-center gap-3">
-            {author?.avatarUrl ? (
-              <img src={author.avatarUrl} alt="" className="w-11 h-11 rounded-full object-cover ring-1 ring-white/18" />
-            ) : (
-              <div className="w-11 h-11 rounded-full bg-white/10" />
-            )}
-            <div className="min-w-0 flex-1">
-              <div className="text-[15px] font-semibold text-white truncate font-['Inter']">{author?.displayName ?? "Creator"}</div>
-              {author?.handle ? (
-                <Link href={`/u/${author.handle}`} className="text-[11px] text-white/45 font-['Inter']">
-                  @{author.handle}
-                </Link>
-              ) : null}
-            </div>
-          </div>
-
-          <h2 className="font-['Playfair_Display'] text-[26px] leading-[1.15] text-white italic max-w-[95%]" style={{ textShadow: "0 4px 28px rgba(0,0,0,0.55)" }}>
+      <div className="absolute bottom-0 left-0 right-0 z-20 pointer-events-none">
+        <div
+          className="pointer-events-none h-32"
+          style={{
+            background: "linear-gradient(to top, rgba(0,0,0,0.94) 0%, rgba(0,0,0,0.55) 45%, transparent 100%)",
+          }}
+        />
+        <div className={`px-5 pb-[max(env(safe-area-inset-bottom),22px)] pt-0 -mt-20 pointer-events-auto ${locked ? "opacity-38" : ""}`}>
+          <h2 className="font-['Playfair_Display'] text-[21px] md:text-[22px] leading-snug text-white max-w-[96%]" style={{ textShadow: "0 6px 32px rgba(0,0,0,0.65)" }}>
             {post.title}
           </h2>
+          {post.body?.trim() ? (
+            <p className="mt-2 text-[12px] font-['Inter'] text-white/42 leading-relaxed line-clamp-2 max-w-[92%]">{post.body.trim()}</p>
+          ) : null}
 
-          <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center gap-2 flex-wrap mt-4">
             <motion.button type="button" whileTap={{ scale: 0.9 }} onClick={() => like.mutate()}
-              className="flex items-center gap-2 px-4 py-2 rounded-full backdrop-blur-md border border-white/14 bg-black/28 text-white text-[12px] font-['Inter']">
-              <Heart size={16} fill={post.liked ? "currentColor" : "none"} /> {post.likes}
+              className="flex items-center gap-2 px-3.5 py-2 rounded-full backdrop-blur-md border border-white/12 bg-black/22 text-white text-[11px] font-['Inter']">
+              <Heart size={15} fill={post.liked ? "currentColor" : "none"} /> {post.likes}
             </motion.button>
             <Link href={`/post/${post.id}`}
-              className="flex items-center gap-2 px-4 py-2 rounded-full backdrop-blur-md border border-white/14 bg-black/24 text-white/90 text-[12px] font-['Inter']">
-              <MessageCircle size={16} /> {post.comments}
+              className="flex items-center gap-2 px-3.5 py-2 rounded-full backdrop-blur-md border border-white/12 bg-black/18 text-white/88 text-[11px] font-['Inter']">
+              <MessageCircle size={15} /> {post.comments}
             </Link>
             <motion.button
               type="button"
@@ -313,11 +385,17 @@ function ReelItem({
                   void navigator.clipboard.writeText(url);
                 });
               }}
-              className="flex items-center gap-2 px-4 py-2 rounded-full backdrop-blur-md border border-white/14 bg-black/22 text-white/85 text-[12px] font-['Inter'] ml-auto"
+              className="flex items-center gap-2 px-3.5 py-2 rounded-full backdrop-blur-md border border-white/12 bg-black/16 text-white/80 text-[11px] font-['Inter'] ml-auto"
             >
-              <Share2 size={15} /> Share
+              <Share2 size={14} /> Share
             </motion.button>
           </div>
+
+          {active && !locked && (primaryVideo || legacyAudio) ? (
+            <div className="mt-4 h-[2px] rounded-full bg-white/[0.09] overflow-hidden">
+              <motion.div className="h-full rounded-full bg-white/[0.42]" style={{ width: `${progPct}%` }} transition={{ duration: 0.08 }} />
+            </div>
+          ) : null}
         </div>
       </div>
     </motion.div>
@@ -335,7 +413,6 @@ export default function ReelsVideoPage() {
   const [muted, setMuted] = useState(true);
 
   const activeSafe = reels.length > 0 ? Math.min(active, reels.length - 1) : 0;
-  const activePost = reels[activeSafe];
 
   useEffect(() => {
     const q = typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("focus") : null;
@@ -415,56 +492,6 @@ export default function ReelsVideoPage() {
     });
   }, [reels, activeSafe]);
 
-  const [progress, setProgress] = useState(0);
-
-  useEffect(() => {
-    const slide = containerRef.current?.querySelector(`[data-reel-index="${activeSafe}"]`);
-    const vid = slide?.querySelector("video");
-    const aud = slide?.querySelector("audio");
-    const el = vid ?? aud;
-    if (!el) {
-      setProgress(0);
-      return;
-    }
-    const onTime = () => {
-      const d = (el as HTMLMediaElement).duration;
-      const t = (el as HTMLMediaElement).currentTime;
-      setProgress(d > 0 && Number.isFinite(d) ? (t / d) * 100 : 0);
-    };
-    el.addEventListener("timeupdate", onTime);
-    el.addEventListener("loadedmetadata", onTime);
-    return () => {
-      el.removeEventListener("timeupdate", onTime);
-      el.removeEventListener("loadedmetadata", onTime);
-    };
-  }, [activeSafe, activePost?.id]);
-
-  const togglePlayback = useCallback(() => {
-    const slide = containerRef.current?.querySelector(`[data-reel-index="${activeSafe}"]`);
-    const vid = slide?.querySelector("video") as HTMLVideoElement | null;
-    const aud = slide?.querySelector("audio") as HTMLAudioElement | null;
-    const el = vid ?? aud;
-    if (!el) return;
-    if (el.paused) void el.play().catch(() => {});
-    else el.pause();
-  }, [activeSafe]);
-
-  const [pausedLocal, setPausedLocal] = useState(false);
-  useEffect(() => {
-    const slide = containerRef.current?.querySelector(`[data-reel-index="${activeSafe}"]`);
-    const el = slide?.querySelector("video, audio") as HTMLMediaElement | null;
-    if (!el) return;
-    const onPlay = () => setPausedLocal(false);
-    const onPause = () => setPausedLocal(true);
-    el.addEventListener("play", onPlay);
-    el.addEventListener("pause", onPause);
-    setPausedLocal(el.paused);
-    return () => {
-      el.removeEventListener("play", onPlay);
-      el.removeEventListener("pause", onPause);
-    };
-  }, [activeSafe, activePost?.id]);
-
   return (
     <div className="min-h-[100dvh] w-full bg-black text-white relative">
       <header className="fixed top-0 left-0 right-0 z-40 flex items-center justify-between px-4 pt-[max(env(safe-area-inset-top),10px)] pb-2 pointer-events-none">
@@ -488,12 +515,6 @@ export default function ReelsVideoPage() {
         </motion.button>
       </header>
 
-      {progress > 0 && (
-        <div className="fixed top-[max(env(safe-area-inset-top),52px)] left-4 right-4 z-30 h-[3px] rounded-full bg-white/10 overflow-hidden pointer-events-none">
-          <motion.div className="h-full bg-white/75 rounded-full" style={{ width: `${progress}%` }} transition={{ duration: 0.12 }} />
-        </div>
-      )}
-
       {isLoading && (
         <div className="flex flex-col items-center justify-center min-h-[100dvh] gap-4">
           <div className="w-9 h-9 rounded-full border-2 border-[rgba(201,168,76,0.45)] border-t-transparent animate-spin" />
@@ -515,16 +536,6 @@ export default function ReelsVideoPage() {
 
       {!isLoading && reels.length > 0 && (
         <>
-          <motion.button
-            type="button"
-            whileTap={{ scale: 0.93 }}
-            onClick={togglePlayback}
-            className="fixed bottom-[max(env(safe-area-inset-bottom),100px)] left-1/2 -translate-x-1/2 z-40 w-14 h-14 rounded-full backdrop-blur-lg bg-black/45 border border-white/18 flex items-center justify-center pointer-events-auto"
-            aria-label={pausedLocal ? "Play" : "Pause"}
-          >
-            {pausedLocal ? <Play size={22} className="text-white ml-0.5" fill="white" /> : <Pause size={22} className="text-white" />}
-          </motion.button>
-
           <div
             ref={containerRef}
             className="h-[100dvh] overflow-y-auto overscroll-y-contain snap-y snap-mandatory no-scrollbar scroll-smooth"

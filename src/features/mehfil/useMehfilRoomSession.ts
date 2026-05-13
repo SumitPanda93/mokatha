@@ -82,6 +82,13 @@ export function useMehfilRoomSession(
   const activeSpeaker = queue.find((q) => q.status === "speaking");
   const pendingQueue = queue.filter((q) => q.status === "pending");
   const canPublishNow = isHost || myEntry?.status === "speaking";
+  const myQueuePosition =
+    myEntry?.status === "pending"
+      ? (() => {
+          const ix = pendingQueue.findIndex((q) => q.userId === me);
+          return ix >= 0 ? ix + 1 : null;
+        })()
+      : null;
 
   useEffect(() => {
     mutedRef.current = muted;
@@ -123,6 +130,7 @@ export function useMehfilRoomSession(
         if (cancelled || !ctrl) return;
         livekitRef.current = ctrl;
         lkPublishModeRef.current = wantPublish;
+        ctrl.primeRemotePlayback("publish_role_switch");
         if (wantPublish && myEntry?.status === "speaking") {
           await ctrl.setMicEnabled(true);
           setMuted(false);
@@ -163,6 +171,7 @@ export function useMehfilRoomSession(
       const lk = livekitRef.current;
       if (!lk) return;
       lk.enableAudio();
+      lk.primeRemotePlayback("document_visibility");
       void lk.room.startAudio().catch(() => {});
     };
     document.addEventListener("visibilitychange", onVis);
@@ -173,6 +182,7 @@ export function useMehfilRoomSession(
     if (!joined || !livekitRef.current || lkConnState === null) return;
     if (lkConnState === ConnectionState.Connected && prevLkConnRef.current !== ConnectionState.Connected) {
       livekitRef.current.enableAudio();
+      livekitRef.current.primeRemotePlayback("conn_state_connected");
       void livekitRef.current.room.startAudio().catch(() => {});
     }
     prevLkConnRef.current = lkConnState;
@@ -182,6 +192,7 @@ export function useMehfilRoomSession(
     if (!joined || !isLiveKitConfigured()) return;
     const t = window.setTimeout(() => {
       livekitRef.current?.enableAudio();
+      livekitRef.current?.primeRemotePlayback("joined_stabilize");
       void livekitRef.current?.room.startAudio().catch(() => {});
     }, 380);
     return () => clearTimeout(t);
@@ -236,6 +247,16 @@ export function useMehfilRoomSession(
 
   useEffect(() => () => teardown(), [teardown]);
 
+  const sendHostMuteSpeaker = useCallback((targetUserId: string) => {
+    const ch = channelRef.current;
+    if (!ch || !isHost || targetUserId === me) return;
+    void ch.send({
+      type: "broadcast",
+      event: "lk_host_mute",
+      payload: { target_user_id: targetUserId },
+    });
+  }, [isHost, me]);
+
   const joinRoom = useCallback(async () => {
     if (!me || !myUser || !mehfil) return;
     setJoined(true);
@@ -258,6 +279,7 @@ export function useMehfilRoomSession(
         if (room) {
           livekitRef.current = room;
           lkPublishModeRef.current = canPublish;
+          room.primeRemotePlayback("post_join_handshake");
         }
       });
     }
@@ -286,6 +308,12 @@ export function useMehfilRoomSession(
       .on("broadcast", { event: "chat" }, ({ payload }: { payload: ChatMsg }) => {
         setChat((c) => [...c.slice(-80), payload]);
         setTimeout(() => chatRef.current?.scrollTo({ top: 9999, behavior: "smooth" }), 40);
+      })
+      .on("broadcast", { event: "lk_host_mute" }, ({ payload }: { payload?: { target_user_id?: string } }) => {
+        if (payload?.target_user_id !== me) return;
+        setMuted(true);
+        void livekitRef.current?.setMicEnabled(false);
+        toast.message("Host muted your microphone", { duration: 2400 });
       })
       .subscribe(async (status) => {
         if (status !== "SUBSCRIBED") return;
@@ -392,8 +420,10 @@ export function useMehfilRoomSession(
     livekitRef,
     activeSpeaker,
     pendingQueue,
+    myQueuePosition,
     myEntry,
     canPublishNow,
+    sendHostMuteSpeaker,
     gatheredVoices,
     benchListeners,
     lkConnecting,
