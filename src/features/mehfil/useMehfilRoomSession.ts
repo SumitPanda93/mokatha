@@ -111,19 +111,40 @@ export function useMehfilRoomSession(
   );
 
   const [hostCameraOn, setHostCameraOn] = useState(() => Boolean(studio && isHost));
+  /** Bumped when LiveKit controller is attached — lets UI re-bind mounts after lkConnected races ahead of livekitRef. */
+  const [lkRoomReady, setLkRoomReady] = useState(0);
+  const videoMountsRef = useRef<{ local: HTMLElement | null; remote: HTMLElement | null }>({
+    local: null,
+    remote: null,
+  });
+
   useEffect(() => {
     if (studio && isHost) setHostCameraOn(true);
   }, [studio, isHost]);
 
-  const bindLiveKitVideo = useCallback((local: HTMLElement | null, remote: HTMLElement | null) => {
+  const bindVideoMountsToLiveKit = useCallback(() => {
     const lk = livekitRef.current;
     if (!lk) return;
+    const { local, remote } = videoMountsRef.current;
     const patch: Partial<{ local: HTMLElement | null; remote: HTMLElement | null }> = {};
     if (local) patch.local = local;
     if (remote) patch.remote = remote;
     if (Object.keys(patch).length === 0) return;
+    if (import.meta.env.DEV) {
+      console.info("[mehfil:session] bind_video_mounts", {
+        has_local: Boolean(local),
+        has_remote: Boolean(remote),
+      });
+    }
     lk.bindVideoElements(patch);
+    lk.primeRemotePlayback("video_mount_bind");
   }, []);
+
+  const bindLiveKitVideo = useCallback((local: HTMLElement | null, remote: HTMLElement | null) => {
+    if (local) videoMountsRef.current.local = local;
+    if (remote) videoMountsRef.current.remote = remote;
+    bindVideoMountsToLiveKit();
+  }, [bindVideoMountsToLiveKit]);
 
   const myEntry = queue.find((q) => q.userId === me);
   const activeSpeaker = queue.find((q) => q.status === "speaking");
@@ -184,6 +205,8 @@ export function useMehfilRoomSession(
         if (cancelled || !ctrl) return;
         livekitRef.current = ctrl;
         lkPublishModeRef.current = wantPublish;
+        setLkRoomReady((n) => n + 1);
+        bindVideoMountsToLiveKit();
         ctrl.primeRemotePlayback("publish_role_switch");
         if (wantPublish && myEntry?.status === "speaking") {
           await ctrl.setMicEnabled(true);
@@ -196,6 +219,7 @@ export function useMehfilRoomSession(
         }
         if (studio && isHost && wantPublish) {
           await ctrl.setCameraEnabled(hostCameraOn);
+          bindVideoMountsToLiveKit();
         }
       })();
     }, 240);
@@ -207,7 +231,7 @@ export function useMehfilRoomSession(
         lkReconnectScheduledRef.current = null;
       }
     };
-  }, [joined, isHost, myEntry?.status, mehfilId, me, studio, liveKitOptsFor, hostCameraOn]);
+  }, [joined, isHost, myEntry?.status, mehfilId, me, studio, liveKitOptsFor, hostCameraOn, bindVideoMountsToLiveKit]);
 
   useEffect(() => {
     if (!joined || !lkConnected || !livekitRef.current || !studio || !isHost) return;
@@ -304,6 +328,8 @@ export function useMehfilRoomSession(
       livekitRef.current = null;
       lkPublishModeRef.current = null;
       joinCycleStartedRef.current = false;
+      videoMountsRef.current = { local: null, remote: null };
+      setLkRoomReady(0);
       setJoined(false);
       setRoomEnded(true);
       toast.message("This Mehfil has ended.", { duration: 3200 });
@@ -327,6 +353,8 @@ export function useMehfilRoomSession(
     livekitRef.current = null;
     lkPublishModeRef.current = null;
     joinCycleStartedRef.current = false;
+    videoMountsRef.current = { local: null, remote: null };
+    setLkRoomReady(0);
   }, []);
 
   useEffect(() => () => teardown(), [teardown]);
@@ -383,9 +411,16 @@ export function useMehfilRoomSession(
         if (!room) return;
         livekitRef.current = room;
         lkPublishModeRef.current = canPublish;
+        setLkRoomReady((n) => n + 1);
+        bindVideoMountsToLiveKit();
+        if (canPublish && isHost) {
+          await room.setMicEnabled(true);
+          setMuted(false);
+        }
         if (studio && isHost && canPublish) {
           await room.setCameraEnabled(true);
           setHostCameraOn(true);
+          bindVideoMountsToLiveKit();
         }
         room.primeRemotePlayback("post_join_handshake");
       });
@@ -460,11 +495,12 @@ export function useMehfilRoomSession(
           avatar_url: myUser.avatarUrl ?? "",
           role,
         });
+        syncPresence();
         trackEvent("mehfil_join", { mehfil_id: mehfilId });
       });
 
     channelRef.current = channel;
-  }, [me, myUser, mehfil, mehfilId, isHost, myEntry?.status, onMicrophoneEnabledChanged, liveKitOptsFor, studio]);
+  }, [me, myUser, mehfil, mehfilId, isHost, myEntry?.status, onMicrophoneEnabledChanged, liveKitOptsFor, studio, bindVideoMountsToLiveKit]);
 
   const leaveRoom = useCallback(() => {
     setSupportMoment(null);
@@ -475,6 +511,7 @@ export function useMehfilRoomSession(
     teardown();
     joinCycleStartedRef.current = false;
     lkPublishModeRef.current = null;
+    setLkRoomReady(0);
     endedRef.current = false;
     sawLiveRef.current = false;
     setJoined(false);
@@ -530,7 +567,12 @@ export function useMehfilRoomSession(
     leaveRoom();
   }, [leaveRoom]);
 
-  const gatheredVoices = presence.filter((p) => p.role !== "host").length;
+  const gatheredVoices = (() => {
+    const fromPresence = presence.filter((p) => p.role !== "host").length;
+    if (fromPresence > 0) return fromPresence;
+    if (joined && me && !isHost) return 1;
+    return 0;
+  })();
   const benchListeners = presence.filter((p) => {
     if (p.role === "host" || p.role === "speaker") return false;
     if (activeSpeaker && p.user_id === activeSpeaker.userId) return false;
@@ -591,5 +633,6 @@ export function useMehfilRoomSession(
     hostCameraOn,
     setHostCameraOn,
     bindLiveKitVideo,
+    lkRoomReady,
   };
 }

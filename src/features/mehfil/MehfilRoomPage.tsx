@@ -272,26 +272,35 @@ export default function MehfilRoomPage() {
   }, [session.isHost, session.supportOpen, session.setSupportOpen]);
 
   useEffect(() => {
-    if (!session.joined) return;
+    if (!session.joined || !session.studio) return;
     let cancelled = false;
     const bind = () => {
       if (cancelled) return;
-      session.bindLiveKitVideo(localVidRef.current, remoteVidRef.current);
-      if (session.lkConnected) {
-        session.livekitRef.current?.primeRemotePlayback("video_mount");
-      }
+      const local = session.isHost ? localVidRef.current : null;
+      const remote = session.isHost ? null : remoteVidRef.current;
+      session.bindLiveKitVideo(local, remote);
     };
     const rafId = requestAnimationFrame(() => {
       bind();
       requestAnimationFrame(bind);
     });
     const lateId = window.setTimeout(bind, 150);
+    const lateId2 = window.setTimeout(bind, 480);
     return () => {
       cancelled = true;
       cancelAnimationFrame(rafId);
       clearTimeout(lateId);
+      clearTimeout(lateId2);
     };
-  }, [session.joined, session.lkConnected, session.bindLiveKitVideo, session.studio, session.hostCameraOn]);
+  }, [
+    session.joined,
+    session.lkConnected,
+    session.lkRoomReady,
+    session.bindLiveKitVideo,
+    session.studio,
+    session.hostCameraOn,
+    session.isHost,
+  ]);
 
   const raiseHandMut = useRaiseHand();
   const lowerHandMut = useLowerHand();

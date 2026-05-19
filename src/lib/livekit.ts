@@ -487,11 +487,17 @@ export async function connectToMehfil(
     if (publication.kind === Track.Kind.Audio) {
       audioLog("remote_track_published", { room_id: roomId, track_sid: publication.trackSid, from: participant.identity });
       ensureRemoteAudioSubscribed(publication, participant.identity);
+      if (publication.track && publication.isSubscribed) {
+        attachRemoteAudio(publication.track as RemoteTrack, publication, participant.identity);
+      }
       return;
     }
     if (publication.kind === Track.Kind.Video) {
       ensureRemoteVideoSubscribed(publication, participant.identity);
       mediaLog("remote_track_published", { kind: "video", track_sid: publication.trackSid, from: participant.identity });
+      if (publication.track && publication.isSubscribed) {
+        mountRemoteVideo(publication.track as RemoteTrack, publication, participant.identity);
+      }
     }
   });
 
@@ -548,14 +554,23 @@ export async function connectToMehfil(
 
   room.on(RoomEvent.ParticipantConnected, (participant: RemoteParticipant) => {
     participant.trackPublications.forEach((pub) => {
+      const rp = pub as RemoteTrackPublication;
       if (pub.kind === Track.Kind.Audio) {
-        ensureRemoteAudioSubscribed(pub as RemoteTrackPublication, participant.identity);
+        ensureRemoteAudioSubscribed(rp, participant.identity);
+        if (rp.track && rp.isSubscribed) {
+          attachRemoteAudio(rp.track as RemoteTrack, rp, participant.identity);
+        }
       }
       if (pub.kind === Track.Kind.Video) {
-        ensureRemoteVideoSubscribed(pub as RemoteTrackPublication, participant.identity);
+        ensureRemoteVideoSubscribed(rp, participant.identity);
+        if (rp.track && rp.isSubscribed) {
+          mountRemoteVideo(rp.track as RemoteTrack, rp, participant.identity);
+        }
       }
     });
     primePlayback("participant_connected");
+    syncPublishedVideos("participant_connected");
+    tryFlushPendingHostVideo("participant_connected");
     callbacks.onParticipantCountChange?.(room.remoteParticipants.size + 1);
     audioLog("participant_connected", { room_id: roomId, identity: participant.identity });
   });
