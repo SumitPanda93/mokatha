@@ -492,6 +492,21 @@ export default function ReelsVideoPage() {
     });
   }, [reels, activeSafe]);
 
+  useEffect(() => {
+    return () => {
+      const root = containerRef.current;
+      if (!root) return;
+      root.querySelectorAll("video, audio").forEach((el) => {
+        try {
+          (el as HTMLMediaElement).pause();
+          if (el instanceof HTMLMediaElement) el.removeAttribute("src");
+        } catch {
+          /* ignore */
+        }
+      });
+    };
+  }, []);
+
   return (
     <div className="min-h-[100dvh] w-full bg-black text-white relative">
       <header className="fixed top-0 left-0 right-0 z-40 flex items-center justify-between px-4 pt-[max(env(safe-area-inset-top),10px)] pb-2 pointer-events-none">

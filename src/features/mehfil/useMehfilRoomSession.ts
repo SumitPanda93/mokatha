@@ -3,12 +3,14 @@
  * Keeps listener/speaker presence roles aligned with the speaker queue.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { ConnectionState } from "livekit-client";
 import { toast } from "sonner";
 import {
   supabase,
   earnInkPoints,
   sendSupportAction,
+  invalidateWallet,
   getCurrentUserId,
   useUser,
   type QueueEntry,
@@ -49,6 +51,7 @@ export function useMehfilRoomSession(
   navigateToMehfilList: () => void,
 ) {
   const me = getCurrentUserId();
+  const qc = useQueryClient();
   const { data: myUser } = useUser(me ?? "");
 
   const [joined, setJoined] = useState(false);
@@ -308,6 +311,7 @@ export function useMehfilRoomSession(
   }, [joined, mehfil?.isLive, mehfil]);
 
   const teardown = useCallback(() => {
+    if (import.meta.env.DEV) console.info("[mehfil:session] teardown");
     if (lkReconnectScheduledRef.current) {
       clearTimeout(lkReconnectScheduledRef.current);
       lkReconnectScheduledRef.current = null;
@@ -356,6 +360,7 @@ export function useMehfilRoomSession(
     if (!me || !myUser || !mehfil) return;
     if (joinCycleStartedRef.current) return;
     joinCycleStartedRef.current = true;
+    if (import.meta.env.DEV) console.info("[mehfil:session] join_start", { mehfil_id: mehfilId });
     setJoined(true);
     earnInkPoints(me, 15).catch(console.warn);
 
@@ -488,6 +493,7 @@ export function useMehfilRoomSession(
     setPayingTicket(true);
     try {
       await sendSupportAction(mehfil.hostId, "ticket", mehfil.ticketPrice, undefined, mehfilId);
+      invalidateWallet(qc);
       setHasTicket(true);
       await joinRoom();
     } catch (e: unknown) {
@@ -496,7 +502,7 @@ export function useMehfilRoomSession(
     } finally {
       setPayingTicket(false);
     }
-  }, [mehfil?.hostId, mehfil?.ticketPrice, mehfilId, joinRoom]);
+  }, [mehfil?.hostId, mehfil?.ticketPrice, mehfilId, joinRoom, qc]);
 
   const finalizeHostEnd = useCallback(() => {
     teardown();

@@ -6,7 +6,7 @@ import { useTitle } from "@/hooks/useTitle";
 import {
   useFeed, useCurrentUser, useMehfils, useLike, useTip, useUser, useSavePost,
   getCurrentUserId, Post, useIsPostUnlocked,
-  usePostsRealtime, useMehfilRealtime, useUnreadCount, useNotificationsRealtime, useAccountSyncRealtime,
+  usePostsRealtime, useMehfilRealtime, useUnreadCount, useAccountSyncRealtime,
 } from "@/lib/store";
 import { SHEET_SPRING } from "@/lib/motionTokens";
 
@@ -435,7 +435,6 @@ export default function Home() {
   usePostsRealtime();
   useAccountSyncRealtime();
   useMehfilRealtime();
-  useNotificationsRealtime();
   const { data: unreadCount = 0 } = useUnreadCount();
 
   const filtered = posts.filter((p) => {

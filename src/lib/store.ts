@@ -975,6 +975,7 @@ export async function notifyFollowersMehfilLive(mehfilId: string): Promise<void>
 const FUNCTIONS_ORIGIN = import.meta.env.VITE_SUPABASE_URL as string;
 
 export async function startMehfilRecording(mehfilId: string): Promise<{ ok: boolean; error?: string }> {
+  if (import.meta.env.DEV) console.info("[replay:egress] start_request", { mehfil_id: mehfilId });
   try {
     const { data: { session } } = await supabase.auth.getSession();
     const res = await fetch(`${FUNCTIONS_ORIGIN}/functions/v1/mehfil-recording-start`, {
@@ -987,18 +988,24 @@ export async function startMehfilRecording(mehfilId: string): Promise<{ ok: bool
     });
     const json = await res.json().catch(() => ({}));
     if (!res.ok) {
-      return { ok: false, error: typeof json?.error === "string" ? json.error : `recording_start_${res.status}` };
+      const err = typeof json?.error === "string" ? json.error : `recording_start_${res.status}`;
+      if (import.meta.env.DEV) console.warn("[replay:egress] start_failed", { mehfil_id: mehfilId, error: err });
+      return { ok: false, error: err };
     }
+    if (import.meta.env.DEV) console.info("[replay:egress] start_ok", { mehfil_id: mehfilId, egress_id: json?.egressId ?? "" });
     return { ok: true };
   } catch (e: unknown) {
-    return { ok: false, error: e instanceof Error ? e.message : "recording_start_failed" };
+    const err = e instanceof Error ? e.message : "recording_start_failed";
+    if (import.meta.env.DEV) console.warn("[replay:egress] start_error", { mehfil_id: mehfilId, error: err });
+    return { ok: false, error: err };
   }
 }
 
 export async function stopMehfilRecording(mehfilId: string): Promise<void> {
+  if (import.meta.env.DEV) console.info("[replay:egress] stop_request", { mehfil_id: mehfilId });
   try {
     const { data: { session } } = await supabase.auth.getSession();
-    await fetch(`${FUNCTIONS_ORIGIN}/functions/v1/mehfil-recording-stop`, {
+    const res = await fetch(`${FUNCTIONS_ORIGIN}/functions/v1/mehfil-recording-stop`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -1006,8 +1013,14 @@ export async function stopMehfilRecording(mehfilId: string): Promise<void> {
       },
       body: JSON.stringify({ mehfilId }),
     });
+    const json = await res.json().catch(() => ({}));
+    if (import.meta.env.DEV) {
+      if (!res.ok) console.warn("[replay:egress] stop_failed", { mehfil_id: mehfilId, status: res.status, error: json?.error ?? "" });
+      else console.info("[replay:egress] stop_ok", { mehfil_id: mehfilId, stopped: json?.stopped ?? false });
+    }
   } catch (e: unknown) {
-    console.warn("[mk:recording] stop failed", e);
+    if (import.meta.env.DEV) console.warn("[replay:egress] stop_error", { mehfil_id: mehfilId, error: e instanceof Error ? e.message : String(e) });
+    else console.warn("[mk:recording] stop failed", e);
   }
 }
 
@@ -1921,11 +1934,16 @@ export function useFollow() {
   });
 }
 
-function invalidateWallet(qc: ReturnType<typeof useQueryClient>) {
+export function invalidateWallet(qc: ReturnType<typeof useQueryClient>) {
   const me = getCurrentUserId() ?? "";
   if (!me) return;
   qc.invalidateQueries({ queryKey: QK.walletBalance(me) });
   qc.invalidateQueries({ queryKey: QK.transactions(me) });
+}
+
+function walletLog(event: string, detail: Record<string, unknown> = {}) {
+  if (!import.meta.env.DEV) return;
+  console.info("[wallet:support]", { event, ...detail });
 }
 
 export function useTip(scope: "post" | "mehfil") {
@@ -2682,27 +2700,23 @@ export async function sendSupportAction(
   const me = getCurrentUserId();
   if (!me) throw new Error("not_authenticated");
   if (me === toUserId) throw new Error("cannot_support_yourself");
-  const { data: myWallet } = await supabase
-    .from("wallet_balances").select("balance").eq("user_id", me).maybeSingle();
-  if ((myWallet?.balance ?? 0) < amount) throw new Error("insufficient_balance");
-  const { data: toWallet } = await supabase
-    .from("wallet_balances").select("balance").eq("user_id", toUserId).maybeSingle();
-  const now = new Date().toISOString();
-  await Promise.all([
-    supabase.from("wallet_balances")
-      .update({ balance: (myWallet?.balance ?? 0) - amount }).eq("user_id", me),
-    supabase.from("wallet_balances")
-      .upsert({ user_id: toUserId, balance: (toWallet?.balance ?? 0) + amount }),
-    supabase.from("support_actions").insert({
-      id: `sa${uid()}`, from_user_id: me, to_user_id: toUserId,
-      post_id: postId ?? null, mehfil_id: mehfilId ?? null,
-      action_type: actionType, amount, created_at: now,
-    }),
-    supabase.from("transactions").insert([
-      { id: `tx${uid()}`, user_id: me, kind: "tip-sent", amount, status: "completed", created_at: now, counterparty_id: toUserId, note: `${actionType} appreciation` },
-      { id: `txr${uid()}`, user_id: toUserId, kind: "tip-received", amount, status: "completed", created_at: now, counterparty_id: me, note: `${actionType} received` },
-    ]),
-  ]);
+  walletLog("send_start", { to_user_id: toUserId, action_type: actionType, amount, post_id: postId ?? "", mehfil_id: mehfilId ?? "" });
+  const { error } = await supabase.rpc("send_support_action", {
+    p_to_user_id: toUserId,
+    p_action_type: actionType,
+    p_amount: amount,
+    p_post_id: postId ?? null,
+    p_mehfil_id: mehfilId ?? null,
+  });
+  if (error) {
+    const msg = error.message ?? "";
+    walletLog("send_failed", { message: msg });
+    if (/insufficient_balance/i.test(msg)) throw new Error("insufficient_balance");
+    if (/not_authenticated/i.test(msg)) throw new Error("not_authenticated");
+    if (/cannot_support_yourself/i.test(msg)) throw new Error("cannot_support_yourself");
+    throw new Error(msg || "support_failed");
+  }
+  walletLog("send_ok", { to_user_id: toUserId, action_type: actionType, amount });
   const label =
     actionType === "chai"    ? "☕ a chai"  :
     actionType === "rose"    ? "🌹 a rose"  :
