@@ -95,6 +95,8 @@ export function useMehfilRoomSession(
   const mehfilMedia = useMehfilMediaContext();
   const [localVideoPlaying, setLocalVideoPlaying] = useState(false);
   const [remoteVideoPlaying, setRemoteVideoPlaying] = useState(false);
+  /** Listener: host has an active camera track (not audio-only / camera-off). */
+  const [remoteHostVideoAvailable, setRemoteHostVideoAvailable] = useState(false);
 
   const lkCbRef = useRef({
     setLkConnState: (_s: ConnectionState) => {},
@@ -119,21 +121,22 @@ export function useMehfilRoomSession(
     return { videoTrack: p.videoTrack, audioTrack: p.audioTrack };
   }, [mehfilMedia]);
 
+  const [hostCameraOn, setHostCameraOn] = useState(() => Boolean(studio && isHost));
+
   const liveKitOptsFor = useCallback(
     (wantPublish: boolean): MehfilLiveKitOpts => {
       const preflight =
         studio && wantPublish && isHost ? preflightForLiveKit() : null;
       return {
-        publishCamera: Boolean(studio && wantPublish && isHost),
+        publishCamera: Boolean(studio && wantPublish && isHost && hostCameraOn),
         remoteHostIdentity:
           studio && me && mehfil?.hostId && me !== mehfil.hostId ? mehfil.hostId : null,
         preflightTracks: preflight,
       };
     },
-    [studio, isHost, me, mehfil?.hostId, preflightForLiveKit],
+    [studio, isHost, me, mehfil?.hostId, preflightForLiveKit, hostCameraOn],
   );
 
-  const [hostCameraOn, setHostCameraOn] = useState(() => Boolean(studio && isHost));
   /** Bumped when LiveKit controller is attached — lets UI re-bind mounts after lkConnected races ahead of livekitRef. */
   const [lkRoomReady, setLkRoomReady] = useState(0);
   const videoMountsRef = useRef<{ local: HTMLElement | null; remote: HTMLElement | null }>({
@@ -242,6 +245,10 @@ export function useMehfilRoomSession(
             console.error("[LiveKit] reconnect error", err);
             logOpsEvent("livekit_reconnect_failed", { mehfil_id: mehfilId, message: err.message });
           },
+          onRemoteHostVideoChange: (available) => {
+            setRemoteHostVideoAvailable(available);
+            if (!available) setRemoteVideoPlaying(false);
+          },
           onAudioBlocked: () => cbs.setAudioBlocked(true),
           onReconnecting: () => toast("Reconnecting audio…", { duration: 1700 }),
           onReconnected: () => toast.success("Audio restored", { duration: 1500 }),
@@ -283,9 +290,18 @@ export function useMehfilRoomSession(
 
   useEffect(() => {
     if (!joined || !lkConnected || !livekitRef.current || !studio || !isHost) return;
-    void livekitRef.current.setCameraEnabled(hostCameraOn);
-    if (!hostCameraOn) setLocalVideoPlaying(false);
-  }, [joined, lkConnected, studio, isHost, hostCameraOn]);
+    void livekitRef.current.setCameraEnabled(hostCameraOn).then(() => {
+      if (!hostCameraOn) {
+        setLocalVideoPlaying(false);
+        const mount = videoMountsRef.current.local;
+        if (mount) {
+          mount.replaceChildren();
+        }
+      } else {
+        bindVideoMountsToLiveKit();
+      }
+    });
+  }, [joined, lkConnected, studio, isHost, hostCameraOn, bindVideoMountsToLiveKit]);
 
 
   useEffect(() => {
@@ -390,6 +406,7 @@ export function useMehfilRoomSession(
     mehfilMedia.clearPreflightMedia();
     setLocalVideoPlaying(false);
     setRemoteVideoPlaying(false);
+    setRemoteHostVideoAvailable(false);
     joinCycleStartedRef.current = false;
     lkPublishModeRef.current = null;
     if (lkReconnectScheduledRef.current) {
@@ -490,6 +507,7 @@ export function useMehfilRoomSession(
       } else if (!canPublish && studio) {
         media.transition("subscribed");
         room.ensureRemotePlayback("listener_join");
+        setRemoteHostVideoAvailable(room.isRemoteHostVideoAvailable());
       } else {
         media.transition(canPublish ? "published" : "subscribed");
       }
@@ -535,10 +553,23 @@ export function useMehfilRoomSession(
           onError: (err) => {
             console.error("[LiveKit] error", err);
             logOpsEvent("livekit_error", { mehfil_id: mehfilId, message: err.message });
-            media.markFailed({ remote: err.message });
-            if (!err.message.includes("VITE_LIVEKIT_URL")) {
+            const deviceNoise = /NotAllowedError|Permission|device|camera|microphone|NotFoundError/i.test(err.message);
+            const connected = livekitRef.current?.room.state === ConnectionState.Connected;
+            if (!deviceNoise && !connected) {
+              media.markFailed({ remote: err.message });
+            }
+            if (
+              !deviceNoise &&
+              !connected &&
+              !err.message.includes("VITE_LIVEKIT_URL") &&
+              media.phaseRef.current !== "recovering"
+            ) {
               toast.error("Audio issue — reconnecting soon…", { duration: 2800 });
             }
+          },
+          onRemoteHostVideoChange: (available) => {
+            setRemoteHostVideoAvailable(available);
+            if (!available) setRemoteVideoPlaying(false);
           },
           onAudioBlocked: () => setAudioBlocked(true),
           onReconnecting: () => {
@@ -737,7 +768,7 @@ export function useMehfilRoomSession(
 
       if (studio) {
         media.transition("publishing");
-        const pub = await lk.verifyHostTracksPublished(true);
+        const pub = await lk.verifyHostTracksPublished(hostCameraOn);
         if (pub.ok === false) {
           const parts: string[] = [];
           if (pub.cameraFailed) parts.push("Camera failed to publish");
@@ -755,7 +786,7 @@ export function useMehfilRoomSession(
       await markLive(mehfilId);
       return true;
     },
-    [isHost, joined, joinRoom, waitForLiveKit, studio, mehfilId, media, preflightForLiveKit, connectLiveKitSession],
+    [isHost, joined, joinRoom, waitForLiveKit, studio, mehfilId, media, preflightForLiveKit, connectLiveKitSession, hostCameraOn],
   );
 
   const leaveRoom = useCallback(() => {
@@ -830,7 +861,13 @@ export function useMehfilRoomSession(
     return true;
   });
 
-  const lkConnecting = isLiveKitConfigured() && joined && (!lkConnState || lkConnState === ConnectionState.Connecting);
+  const lkMediaReady = ["connected", "published", "subscribed"].includes(media.phase);
+  const lkConnecting =
+    isLiveKitConfigured() &&
+    joined &&
+    !lkConnected &&
+    lkConnState !== ConnectionState.Reconnecting &&
+    !lkMediaReady;
   const lkReconnecting = lkConnState === ConnectionState.Reconnecting;
 
   return {
@@ -892,6 +929,7 @@ export function useMehfilRoomSession(
     setLocalVideoPlaying,
     remoteVideoPlaying,
     setRemoteVideoPlaying,
+    remoteHostVideoAvailable,
     retryHostPublish: async () => {
       const lk = livekitRef.current;
       if (!lk) return;
