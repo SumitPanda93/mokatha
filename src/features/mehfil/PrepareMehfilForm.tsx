@@ -2,6 +2,7 @@
  * Premium “prepare the mehfil” creation shell — visual layer only; submits via existing useCreateMehfil payload shape.
  */
 import { useMemo, useState } from "react";
+import { MehfilStudioPreflight } from "@/features/mehfil/MehfilStudioPreflight";
 import { useLocation } from "wouter";
 import { motion } from "framer-motion";
 import {
@@ -61,6 +62,7 @@ export function PrepareMehfilForm() {
     const d = new Date(Date.now() + 60 * 60 * 1000);
     return d.toISOString().slice(0, 16);
   });
+  const [preflightMehfil, setPreflightMehfil] = useState<{ id: string; title: string } | null>(null);
 
   const particles = useMemo(
     () =>
@@ -106,13 +108,27 @@ export function PrepareMehfilForm() {
     create.mutate(payload, {
       onSuccess: (m) => {
         toast.success("Mehfil created");
-        setLocation(`/mehfil/${m.id}`);
+        if (sessionMode === "studio") {
+          setPreflightMehfil({ id: m.id, title: m.title });
+        } else {
+          setLocation(`/mehfil/${m.id}`);
+        }
       },
       onError: (err: Error) => toast.error(`Could not create Mehfil: ${err.message}`),
     });
   };
 
   const descLen = description.length;
+
+  if (preflightMehfil) {
+    return (
+      <MehfilStudioPreflight
+        mehfilTitle={preflightMehfil.title}
+        onBack={() => setPreflightMehfil(null)}
+        onEnter={() => setLocation(`/mehfil/${preflightMehfil.id}`)}
+      />
+    );
+  }
 
   return (
     <div

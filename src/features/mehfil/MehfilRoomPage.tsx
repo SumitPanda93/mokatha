@@ -428,12 +428,14 @@ export default function MehfilRoomPage() {
               whileTap={{ scale: startMehfilMut.isPending ? 1 : 0.97 }}
               disabled={startMehfilMut.isPending}
               onClick={() => {
-                startMehfilMut.mutate(id, {
-                  onSuccess: () => {
-                    void session.joinRoom();
-                  },
-                  onError: (err: Error) => toast.error(err.message || "Could not start"),
-                });
+                void session.startHostMehfilLive(async (mehfilId) => {
+                  await new Promise<void>((resolve, reject) => {
+                    startMehfilMut.mutate(mehfilId, {
+                      onSuccess: () => resolve(),
+                      onError: (err: Error) => reject(err),
+                    });
+                  });
+                }).catch((err: Error) => toast.error(err.message || "Could not start"));
               }}
               className="px-12 py-3.5 rounded-full text-[15px] font-semibold border border-white/[0.14]"
               style={{

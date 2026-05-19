@@ -11,6 +11,7 @@ import {
   upsertMehfilReplayDraft,
   publishMehfilReplay,
   deleteMehfilReplay,
+  retryMehfilReplayProcessing,
   QK,
   useMehfilReplayDraftRow,
   useMehfilReplayDraftRealtime,
@@ -23,6 +24,9 @@ type Props = {
   onClose: () => void;
 };
 
+/** After this, show delayed messaging instead of infinite spinner. */
+const REPLAY_PROCESSING_TIMEOUT_MS = 8 * 60 * 1000;
+
 export default function MehfilReplaySheet({ mehfilId, defaultTitle, onClose }: Props) {
   const qc = useQueryClient();
   const { data: draftRemote } = useMehfilReplayDraftRow(mehfilId, true);
@@ -32,6 +36,7 @@ export default function MehfilReplaySheet({ mehfilId, defaultTitle, onClose }: P
   const [isPrivate, setIsPrivate] = useState(false);
   const [replayId, setReplayId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [processingDelayed, setProcessingDelayed] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -60,12 +65,35 @@ export default function MehfilReplaySheet({ mehfilId, defaultTitle, onClose }: P
 
   const pipeline = draftRemote?.replayProcessingStatus ?? "pending";
   const hasAsset = !!(draftRemote?.audioUrl?.trim() || draftRemote?.videoUrl?.trim());
-  const assetReady = hasAsset || pipeline === "ready";
+  const assetReady = hasAsset;
   const failed = pipeline === "failed";
   const working =
     !failed &&
     !assetReady &&
     (pipeline === "recording" || pipeline === "processing" || pipeline === "pending");
+
+  useEffect(() => {
+    if (!working) {
+      setProcessingDelayed(false);
+      return;
+    }
+    if (import.meta.env.DEV) {
+      console.info("[Mehfil]", { event: "replay_processing_started", mehfil_id: mehfilId, pipeline });
+    }
+    const timer = window.setTimeout(() => {
+      setProcessingDelayed(true);
+      if (import.meta.env.DEV) {
+        console.info("[Mehfil]", { event: "replay_processing_delayed", mehfil_id: mehfilId, pipeline });
+      }
+    }, REPLAY_PROCESSING_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, [working, mehfilId, pipeline]);
+
+  useEffect(() => {
+    if (assetReady && import.meta.env.DEV) {
+      console.info("[Mehfil]", { event: "replay_processing_ready", mehfil_id: mehfilId });
+    }
+  }, [assetReady, mehfilId]);
 
   const invalidateReplay = () => {
     qc.invalidateQueries({ queryKey: ["mehfilReplayPublished", mehfilId] });
@@ -125,6 +153,22 @@ export default function MehfilReplaySheet({ mehfilId, defaultTitle, onClose }: P
       } else {
         toast.error(msg || "Publish failed");
       }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const retryProcessing = async () => {
+    setBusy(true);
+    try {
+      const res = await retryMehfilReplayProcessing(mehfilId);
+      if (!res.ok) {
+        toast.error(res.error ?? "Could not retry processing");
+        return;
+      }
+      setProcessingDelayed(false);
+      invalidateReplay();
+      toast.message("Checking replay status again…");
     } finally {
       setBusy(false);
     }
@@ -218,25 +262,50 @@ export default function MehfilReplaySheet({ mehfilId, defaultTitle, onClose }: P
           </div>
         ) : working ? (
           <div className="py-12 flex flex-col items-center gap-5 pb-8">
-            <motion.div
-              className="w-12 h-12 rounded-full border-2 border-t-transparent"
-              style={{ borderColor: "rgba(232,177,74,0.45)", borderTopColor: "transparent" }}
-              animate={{ rotate: 360 }}
-              transition={{ duration: 1.1, repeat: Infinity, ease: "linear" }}
-            />
-            <div className="text-center space-y-2 max-w-[280px]">
+            {!processingDelayed ? (
+              <motion.div
+                className="w-12 h-12 rounded-full border-2 border-t-transparent"
+                style={{ borderColor: "rgba(232,177,74,0.45)", borderTopColor: "transparent" }}
+                animate={{ rotate: 360 }}
+                transition={{ duration: 1.1, repeat: Infinity, ease: "linear" }}
+              />
+            ) : null}
+            <div className="text-center space-y-2 max-w-[300px]">
               <p className="text-[15px] font-['Playfair_Display']" style={{ color: "rgba(245,243,239,0.88)" }}>
-                Processing the Mehfil…
+                {processingDelayed
+                  ? "Replay processing delayed"
+                  : pipeline === "recording"
+                    ? "Recording your gathering…"
+                    : "Processing your gathering…"}
               </p>
               <p className="text-[12px] font-['Inter'] leading-relaxed" style={{ color: "rgba(245,243,239,0.45)" }}>
-                Your gathering is being preserved. You can step away — we&apos;ll attach the replay quietly.
+                {processingDelayed
+                  ? "The file is taking longer than usual. You can retry processing or save preferences and return later."
+                  : "Your gathering is being preserved. You can step away — we'll attach the replay quietly."}
               </p>
             </div>
-            <button type="button" disabled={busy} onClick={() => void savePreferences()}
-              className="mt-2 px-8 py-3 rounded-full text-[12px] font-['Inter'] border border-white/[0.08] bg-white/[0.04]"
-              style={{ color: "rgba(245,243,239,0.55)" }}>
-              Save title & privacy while waiting
-            </button>
+            <div className="flex flex-col gap-2 w-full max-w-[280px]">
+              {processingDelayed ? (
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void retryProcessing()}
+                  className="w-full py-3 rounded-full text-[13px] font-['Inter'] font-medium border border-amber-200/25 bg-amber-500/10"
+                  style={{ color: "rgba(245,243,239,0.82)" }}
+                >
+                  Retry processing
+                </button>
+              ) : null}
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void savePreferences()}
+                className="w-full py-3 rounded-full text-[12px] font-['Inter'] border border-white/[0.08] bg-white/[0.04]"
+                style={{ color: "rgba(245,243,239,0.55)" }}
+              >
+                Save title & privacy while waiting
+              </button>
+            </div>
           </div>
         ) : (
           <>

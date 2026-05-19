@@ -18,7 +18,13 @@ import {
 } from "@/lib/store";
 import { trackEvent } from "@/lib/analytics";
 import { logOpsEvent } from "@/lib/observability";
-import { connectToMehfil, isLiveKitConfigured, type LiveKitRoom as LKRoom, type MehfilLiveKitOpts } from "@/lib/livekit";
+import {
+  connectToMehfil,
+  isLiveKitConfigured,
+  type LiveKitRoom as LKRoom,
+  type MehfilLiveKitOpts,
+} from "@/lib/livekit";
+import { useMehfilMediaState } from "@/features/mehfil/useMehfilMediaState";
 
 export type PresenceRole = "host" | "speaker" | "listener";
 
@@ -83,6 +89,8 @@ export function useMehfilRoomSession(
   const prevLkConnRef = useRef<ConnectionState | null>(null);
   const supportDismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const publishGateRef = useRef(false);
+  const lkReadyWaitersRef = useRef<Array<(room: LKRoom | null) => void>>([]);
+  const media = useMehfilMediaState();
 
   const lkCbRef = useRef({
     setLkConnState: (_s: ConnectionState) => {},
@@ -146,6 +154,27 @@ export function useMehfilRoomSession(
     bindVideoMountsToLiveKit();
   }, [bindVideoMountsToLiveKit]);
 
+  const resolveLkWaiters = useCallback((room: LKRoom | null) => {
+    const waiters = lkReadyWaitersRef.current.splice(0);
+    waiters.forEach((fn) => fn(room));
+  }, []);
+
+  const waitForLiveKit = useCallback((timeoutMs = 14_000): Promise<LKRoom | null> => {
+    if (livekitRef.current) return Promise.resolve(livekitRef.current);
+    return new Promise((resolve) => {
+      const timer = window.setTimeout(() => {
+        const ix = lkReadyWaitersRef.current.indexOf(onReady);
+        if (ix >= 0) lkReadyWaitersRef.current.splice(ix, 1);
+        resolve(null);
+      }, timeoutMs);
+      const onReady = (room: LKRoom | null) => {
+        clearTimeout(timer);
+        resolve(room);
+      };
+      lkReadyWaitersRef.current.push(onReady);
+    });
+  }, []);
+
   const myEntry = queue.find((q) => q.userId === me);
   const activeSpeaker = queue.find((q) => q.status === "speaking");
   const pendingQueue = queue.filter((q) => q.status === "pending");
@@ -202,11 +231,15 @@ export function useMehfilRoomSession(
           onReconnecting: () => toast("Reconnecting audio…", { duration: 1700 }),
           onReconnected: () => toast.success("Audio restored", { duration: 1500 }),
         }, liveKitOptsFor(wantPublish));
-        if (cancelled || !ctrl) return;
+        if (cancelled || !ctrl) {
+          resolveLkWaiters(null);
+          return;
+        }
         livekitRef.current = ctrl;
         lkPublishModeRef.current = wantPublish;
         setLkRoomReady((n) => n + 1);
         bindVideoMountsToLiveKit();
+        resolveLkWaiters(ctrl);
         ctrl.primeRemotePlayback("publish_role_switch");
         if (wantPublish && myEntry?.status === "speaking") {
           await ctrl.setMicEnabled(true);
@@ -231,7 +264,7 @@ export function useMehfilRoomSession(
         lkReconnectScheduledRef.current = null;
       }
     };
-  }, [joined, isHost, myEntry?.status, mehfilId, me, studio, liveKitOptsFor, hostCameraOn, bindVideoMountsToLiveKit]);
+  }, [joined, isHost, myEntry?.status, mehfilId, me, studio, liveKitOptsFor, hostCameraOn, bindVideoMountsToLiveKit, resolveLkWaiters]);
 
   useEffect(() => {
     if (!joined || !lkConnected || !livekitRef.current || !studio || !isHost) return;
@@ -336,6 +369,25 @@ export function useMehfilRoomSession(
     }
   }, [joined, mehfil?.isLive, mehfil]);
 
+  const fullMediaReset = useCallback(() => {
+    media.reset();
+    joinCycleStartedRef.current = false;
+    lkPublishModeRef.current = null;
+    if (lkReconnectScheduledRef.current) {
+      clearTimeout(lkReconnectScheduledRef.current);
+      lkReconnectScheduledRef.current = null;
+    }
+    videoMountsRef.current = { local: null, remote: null };
+    prevLkConnRef.current = null;
+    prevQueueStatusRef.current = undefined;
+    publishGateRef.current = false;
+    sawLiveRef.current = false;
+    endedRef.current = false;
+    setLkRoomReady(0);
+    setLkConnState(null);
+    setAudioBlocked(false);
+  }, [media]);
+
   const teardown = useCallback(() => {
     if (import.meta.env.DEV) console.info("[mehfil:session] teardown");
     if (lkReconnectScheduledRef.current) {
@@ -351,11 +403,9 @@ export function useMehfilRoomSession(
     channelRef.current = null;
     livekitRef.current?.disconnect();
     livekitRef.current = null;
-    lkPublishModeRef.current = null;
-    joinCycleStartedRef.current = false;
-    videoMountsRef.current = { local: null, remote: null };
-    setLkRoomReady(0);
-  }, []);
+    resolveLkWaiters(null);
+    fullMediaReset();
+  }, [resolveLkWaiters, fullMediaReset]);
 
   useEffect(() => () => teardown(), [teardown]);
 
@@ -394,21 +444,37 @@ export function useMehfilRoomSession(
     earnInkPoints(me, 15).catch(console.warn);
 
     if (isLiveKitConfigured()) {
+      media.transition("connecting");
       const canPublish = isHost || myEntry?.status === "speaking";
       connectToMehfil(mehfilId, me, canPublish, {
-        onConnectionStateChange: setLkConnState,
+        onConnectionStateChange: (state) => {
+          setLkConnState(state);
+          if (state === ConnectionState.Connected) media.transition("connected");
+          if (state === ConnectionState.Reconnecting) media.transition("recovering");
+        },
         onParticipantCountChange: () => {},
         onMicrophoneEnabledChanged,
         onError: (err) => {
           console.error("[LiveKit] error", err);
           logOpsEvent("livekit_error", { mehfil_id: mehfilId, message: err.message });
+          media.markFailed({ remote: err.message });
           toast.error("Audio issue — reconnecting soon…", { duration: 2800 });
         },
         onAudioBlocked: () => setAudioBlocked(true),
-        onReconnecting: () => toast("Reconnecting audio…", { duration: 1900 }),
-        onReconnected: () => toast.success("Audio reconnected", { duration: 1600 }),
+        onReconnecting: () => {
+          media.transition("recovering");
+          toast("Reconnecting audio…", { duration: 1900 });
+        },
+        onReconnected: () => {
+          media.transition("connected");
+          toast.success("Audio reconnected", { duration: 1600 });
+        },
       }, liveKitOptsFor(canPublish)).then(async (room) => {
-        if (!room) return;
+        if (!room) {
+          media.markFailed({ remote: "livekit_connect_failed" });
+          resolveLkWaiters(null);
+          return;
+        }
         livekitRef.current = room;
         lkPublishModeRef.current = canPublish;
         setLkRoomReady((n) => n + 1);
@@ -418,12 +484,31 @@ export function useMehfilRoomSession(
           setMuted(false);
         }
         if (studio && isHost && canPublish) {
+          media.transition("publishing");
           await room.setCameraEnabled(true);
           setHostCameraOn(true);
           bindVideoMountsToLiveKit();
+          const pub = await room.verifyHostTracksPublished(true);
+          if (pub.ok) {
+            media.transition("published");
+          } else if (pub.ok === false) {
+            media.markFailed({
+              camera: pub.cameraFailed ? "Camera failed to publish" : undefined,
+              mic: pub.micFailed ? "Microphone failed to publish" : undefined,
+            });
+          }
+        } else if (!canPublish && studio) {
+          media.transition("subscribed");
+          room.ensureRemotePlayback("listener_join");
+        } else {
+          media.transition(canPublish ? "published" : "subscribed");
         }
         room.primeRemotePlayback("post_join_handshake");
+        resolveLkWaiters(room);
       });
+    } else {
+      media.transition("connected");
+      resolveLkWaiters(null);
     }
 
     const role = presenceRoleFor(isHost, myEntry?.status === "speaking");
@@ -500,7 +585,47 @@ export function useMehfilRoomSession(
       });
 
     channelRef.current = channel;
-  }, [me, myUser, mehfil, mehfilId, isHost, myEntry?.status, onMicrophoneEnabledChanged, liveKitOptsFor, studio, bindVideoMountsToLiveKit]);
+  }, [me, myUser, mehfil, mehfilId, isHost, myEntry?.status, onMicrophoneEnabledChanged, liveKitOptsFor, studio, bindVideoMountsToLiveKit, media, resolveLkWaiters]);
+
+  /** Studio host: connect → verify publish → only then mark mehfil LIVE. */
+  const startHostMehfilLive = useCallback(
+    async (markLive: (id: string) => Promise<void>): Promise<boolean> => {
+      if (!isHost) return false;
+
+      if (!joined) {
+        joinCycleStartedRef.current = false;
+        await joinRoom();
+      }
+
+      const lk = await waitForLiveKit();
+      if (!lk) {
+        toast.error("Could not connect to the studio room.");
+        media.markFailed({ remote: "livekit_timeout" });
+        return false;
+      }
+
+      if (studio) {
+        media.transition("publishing");
+        const pub = await lk.verifyHostTracksPublished(true);
+        if (pub.ok === false) {
+          const parts: string[] = [];
+          if (pub.cameraFailed) parts.push("Camera failed to publish");
+          if (pub.micFailed) parts.push("Microphone failed to publish");
+          toast.error(parts.join(" · ") || "Could not publish studio media");
+          media.markFailed({
+            camera: pub.cameraFailed ? "Camera failed to publish" : undefined,
+            mic: pub.micFailed ? "Microphone failed to publish" : undefined,
+          });
+          return false;
+        }
+        media.transition("published");
+      }
+
+      await markLive(mehfilId);
+      return true;
+    },
+    [isHost, joined, joinRoom, waitForLiveKit, studio, mehfilId, media],
+  );
 
   const leaveRoom = useCallback(() => {
     setSupportMoment(null);
@@ -509,14 +634,9 @@ export function useMehfilRoomSession(
       supportDismissTimerRef.current = null;
     }
     teardown();
-    joinCycleStartedRef.current = false;
-    lkPublishModeRef.current = null;
-    setLkRoomReady(0);
-    endedRef.current = false;
-    sawLiveRef.current = false;
     setJoined(false);
-    setLkConnState(null);
     setMuted(false);
+    setRoomEnded(false);
     if (studio && isHost) setHostCameraOn(true);
     navigateToMehfilList();
   }, [teardown, navigateToMehfilList, studio, isHost]);
@@ -634,5 +754,8 @@ export function useMehfilRoomSession(
     setHostCameraOn,
     bindLiveKitVideo,
     lkRoomReady,
+    mediaPhase: media.phase,
+    mediaFailure: media.failure,
+    startHostMehfilLive,
   };
 }

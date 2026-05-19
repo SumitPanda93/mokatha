@@ -1001,6 +1001,27 @@ export async function startMehfilRecording(mehfilId: string): Promise<{ ok: bool
   }
 }
 
+/** Re-queue replay finalization after stop (host-only, idempotent). */
+export async function retryMehfilReplayProcessing(mehfilId: string): Promise<{ ok: boolean; error?: string }> {
+  if (import.meta.env.DEV) console.info("[Mehfil]", { event: "replay_processing_retry", mehfil_id: mehfilId });
+  try {
+    const me = getCurrentUserId();
+    if (!me) return { ok: false, error: "not_authenticated" };
+    await supabase
+      .from("mehfil_replays")
+      .update({ replay_processing_status: "processing", recording_error: null })
+      .eq("mehfil_id", mehfilId)
+      .eq("host_id", me)
+      .eq("published", false);
+    await stopMehfilRecording(mehfilId);
+    return { ok: true };
+  } catch (e: unknown) {
+    const err = e instanceof Error ? e.message : "retry_failed";
+    if (import.meta.env.DEV) console.warn("[Mehfil]", { event: "replay_processing_retry_failed", mehfil_id: mehfilId, error: err });
+    return { ok: false, error: err };
+  }
+}
+
 export async function stopMehfilRecording(mehfilId: string): Promise<void> {
   if (import.meta.env.DEV) console.info("[replay:egress] stop_request", { mehfil_id: mehfilId });
   try {
