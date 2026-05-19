@@ -67,6 +67,7 @@ import AdminLogs from "@/pages/admin/logs";
 // Layouts
 import MobileShell from "@/components/layout/MobileShell";
 import { AudioProvider } from "@/lib/audioContext";
+import { MehfilMediaProvider } from "@/features/mehfil/MehfilMediaContext";
 import PWAInstallPrompt from "@/components/PWAInstallPrompt";
 import Landing from "@/pages/landing";
 
@@ -297,6 +298,7 @@ function App() {
     <AppErrorBoundary>
       <QueryClientProvider client={queryClient}>
         <AudioProvider>
+          <MehfilMediaProvider>
           <TooltipProvider>
             {!ready ? (
               <div className="min-h-[100dvh] w-full bg-[#E7E3DB] flex justify-center">
@@ -313,6 +315,7 @@ function App() {
             <SonnerToaster />
             <PWAInstallPrompt />
           </TooltipProvider>
+          </MehfilMediaProvider>
         </AudioProvider>
       </QueryClientProvider>
     </AppErrorBoundary>

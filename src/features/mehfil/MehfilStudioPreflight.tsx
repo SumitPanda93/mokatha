@@ -21,7 +21,8 @@ export type StudioPreflightSnapshot = {
 type Props = {
   mehfilTitle: string;
   onBack: () => void;
-  onEnter: () => void;
+  /** Pass live preflight stream into session context — do not stop tracks before navigate. */
+  onEnter: (stream: MediaStream) => void;
 };
 
 export function MehfilStudioPreflight({ mehfilTitle, onBack, onEnter }: Props) {
@@ -31,6 +32,8 @@ export function MehfilStudioPreflight({ mehfilTitle, onBack, onEnter }: Props) {
   const analyserRef = useRef<AnalyserNode | null>(null);
   const rafRef = useRef<number | null>(null);
   const loopbackRef = useRef<{ ctx: AudioContext; src: MediaStreamAudioSourceNode } | null>(null);
+  /** When true, unmount cleanup must not stop tracks (handed off to MehfilMediaContext). */
+  const transferredRef = useRef(false);
 
   const [phase, setPhase] = useState<"checking" | "ready" | "blocked">("checking");
   const [cameraDetected, setCameraDetected] = useState(false);
@@ -155,7 +158,7 @@ export function MehfilStudioPreflight({ mehfilTitle, onBack, onEnter }: Props) {
     void run();
     return () => {
       cancelled = true;
-      stopAll();
+      if (!transferredRef.current) stopAll();
     };
   }, [stopAll]);
 
@@ -331,8 +334,12 @@ export function MehfilStudioPreflight({ mehfilTitle, onBack, onEnter }: Props) {
             disabled={!canEnter}
             whileTap={{ scale: canEnter ? 0.98 : 1 }}
             onClick={() => {
-              stopAll();
-              onEnter();
+              const stream = streamRef.current;
+              if (!stream) return;
+              transferredRef.current = true;
+              stopLoopback();
+              if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
+              onEnter(stream);
             }}
             className="w-full py-3.5 rounded-full text-[14px] font-medium disabled:opacity-35"
             style={{

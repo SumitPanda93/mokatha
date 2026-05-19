@@ -19,6 +19,8 @@ import {
   RoomOptions,
   ParticipantEvent,
   VideoPresets,
+  LocalVideoTrack,
+  LocalAudioTrack,
 } from "livekit-client";
 import { supabase } from "./supabase";
 import { logOpsEvent } from "./observability";
@@ -43,11 +45,18 @@ export interface LiveKitRoom {
   ensureRemotePlayback: (reason: string) => void;
 }
 
+export type MehfilPreflightTracks = {
+  videoTrack?: MediaStreamTrack | null;
+  audioTrack?: MediaStreamTrack | null;
+};
+
 export type MehfilLiveKitOpts = {
   /** Host publishes camera (studio Mehfil). */
   publishCamera?: boolean;
   /** Listener attaches remote camera from this identity (= Mehfil host user id). */
   remoteHostIdentity?: string | null;
+  /** Reuse studio preflight tracks — skips setCameraEnabled / setMicrophoneEnabled getUserMedia. */
+  preflightTracks?: MehfilPreflightTracks | null;
 };
 
 export interface LiveKitCallbacks {
@@ -114,34 +123,37 @@ function countActivePublications(
   return n;
 }
 
-/** Host publish gate — retries enableCamera/enableMic before reporting failure. */
+/** Host publish gate — retries publish (preflight) or enable* before reporting failure. */
 export async function verifyHostPublish(
   room: Room,
-  opts: { needCamera: boolean; roomId?: string },
+  opts: {
+    needCamera: boolean;
+    roomId?: string;
+    /** When set, retries republish existing tracks instead of new getUserMedia. */
+    republishPreflight?: () => Promise<void>;
+  },
 ): Promise<HostPublishResult> {
   const roomId = opts.roomId ?? "";
   const needCamera = opts.needCamera;
+  const usePreflight = Boolean(opts.republishPreflight);
 
   const attempt = async (label: string) => {
     let micOk = countActivePublications(room, Track.Kind.Audio) > 0;
     let camOk = !needCamera || countActivePublications(room, Track.Kind.Video) > 0;
-    if (!micOk) {
-      mehfilLog("mic_publish_retry", { room_id: roomId, phase: label });
+    if (!micOk || (needCamera && !camOk)) {
+      mehfilLog("host_publish_retry", { room_id: roomId, phase: label, preflight: usePreflight });
       try {
-        await room.localParticipant.setMicrophoneEnabled(true);
+        if (usePreflight && opts.republishPreflight) {
+          await opts.republishPreflight();
+        } else {
+          if (!micOk) await room.localParticipant.setMicrophoneEnabled(true);
+          if (needCamera && !camOk) await room.localParticipant.setCameraEnabled(true);
+        }
       } catch (e) {
-        mehfilLog("mic_publish_error", { room_id: roomId, message: e instanceof Error ? e.message : String(e) });
+        mehfilLog("host_publish_error", { room_id: roomId, message: e instanceof Error ? e.message : String(e) });
       }
       micOk = countActivePublications(room, Track.Kind.Audio) > 0;
-    }
-    if (needCamera && !camOk) {
-      mehfilLog("camera_publish_retry", { room_id: roomId, phase: label });
-      try {
-        await room.localParticipant.setCameraEnabled(true);
-      } catch (e) {
-        mehfilLog("camera_publish_error", { room_id: roomId, message: e instanceof Error ? e.message : String(e) });
-      }
-      camOk = countActivePublications(room, Track.Kind.Video) > 0;
+      camOk = !needCamera || countActivePublications(room, Track.Kind.Video) > 0;
     }
     if (micOk) mehfilLog("mic_publish_ok", { room_id: roomId, phase: label });
     if (needCamera && camOk) mehfilLog("camera_publish_ok", { room_id: roomId, phase: label });
@@ -173,6 +185,40 @@ function audioPlaybackReady(el: HTMLAudioElement | undefined): boolean {
   if (!el || !document.body.contains(el)) return false;
   if (!el.srcObject) return false;
   return !el.paused;
+}
+
+async function publishPreflightTracks(
+  room: Room,
+  preflight: MehfilPreflightTracks,
+  needCamera: boolean,
+  roomId: string,
+): Promise<{ localVideo?: LocalVideoTrack; localAudio?: LocalAudioTrack }> {
+  const lp = room.localParticipant;
+  let localVideo: LocalVideoTrack | undefined;
+  let localAudio: LocalAudioTrack | undefined;
+
+  if (
+    preflight.audioTrack &&
+    preflight.audioTrack.readyState === "live" &&
+    countActivePublications(room, Track.Kind.Audio) === 0
+  ) {
+    localAudio = new LocalAudioTrack(preflight.audioTrack, undefined, true);
+    await lp.publishTrack(localAudio);
+    mehfilLog("preflight_audio_published", { room_id: roomId });
+  }
+
+  if (
+    needCamera &&
+    preflight.videoTrack &&
+    preflight.videoTrack.readyState === "live" &&
+    countActivePublications(room, Track.Kind.Video) === 0
+  ) {
+    localVideo = new LocalVideoTrack(preflight.videoTrack, undefined, true);
+    await lp.publishTrack(localVideo);
+    mehfilLog("preflight_video_published", { room_id: roomId });
+  }
+
+  return { localVideo, localAudio };
 }
 
 /** Fetch a LiveKit token from the Supabase edge function */
@@ -221,6 +267,10 @@ export async function connectToMehfil(
   }
 
   const publishCamera = Boolean(canPublish && opts.publishCamera);
+  const preflightTracks = opts.preflightTracks ?? null;
+  const hasPreflight =
+    Boolean(preflightTracks?.audioTrack?.readyState === "live") ||
+    Boolean(preflightTracks?.videoTrack?.readyState === "live");
   const remoteHostIdRaw = opts.remoteHostIdentity ?? null;
   /** Normalize LiveKit participant identity vs DB UUID (case / whitespace drift). */
   const normId = (id: string) => id.trim().toLowerCase();
@@ -239,6 +289,20 @@ export async function connectToMehfil(
   };
 
   const room = new Room(roomOpts);
+
+  let publishedPreflightVideo: LocalVideoTrack | undefined;
+  let publishedPreflightAudio: LocalAudioTrack | undefined;
+
+  const republishPreflight = async () => {
+    if (!preflightTracks || !canPublish) return;
+    const micMissing = countActivePublications(room, Track.Kind.Audio) === 0;
+    const camMissing = publishCamera && countActivePublications(room, Track.Kind.Video) === 0;
+    if (!micMissing && !camMissing) return;
+    const next = await publishPreflightTracks(room, preflightTracks, publishCamera, roomId);
+    if (next.localAudio) publishedPreflightAudio = next.localAudio;
+    if (next.localVideo) publishedPreflightVideo = next.localVideo;
+    scheduleAttachFlush("preflight_republish");
+  };
 
   /** Portrait-forward mounted previews — avoids churn during reconnects */
   let localVideoMount: HTMLElement | null = null;
@@ -324,7 +388,7 @@ export async function connectToMehfil(
       el.muted = true;
       remoteVideoMount.replaceChildren(el);
       remoteVideoBySid.set(sid, el);
-      mehfilLog("remote_video_attach", { room_id: roomId, track_sid: sid, identity: participantIdentity });
+      mehfilLog("remote_video_attached", { room_id: roomId, track_sid: sid, identity: participantIdentity });
       void el.play().then(() => {
         mehfilLog("remote_video_playing", { room_id: roomId, track_sid: sid });
       }).catch((e) => {
@@ -427,7 +491,7 @@ export async function connectToMehfil(
         }
       });
     });
-    mehfilLog("remote_video_attach", { room_id: roomId, reason, attached, playing });
+    mehfilLog("remote_video_attached", { room_id: roomId, reason, attached, playing });
     if (attached && playing) {
       mehfilLog("remote_video_playing", { room_id: roomId, reason });
       return;
@@ -643,6 +707,9 @@ export async function connectToMehfil(
       return;
     }
     if (track.kind === Track.Kind.Video) {
+      if (remoteHostIdNorm && normId(participant.identity) === remoteHostIdNorm) {
+        mehfilLog("remote_video_subscribed", { room_id: roomId, track_sid: publication.trackSid, identity: participant.identity });
+      }
       mountRemoteVideo(track, publication, participant.identity);
       scheduleAttachFlush("track_subscribed_video");
     }
@@ -852,15 +919,23 @@ export async function connectToMehfil(
 
   if (canPublish) {
     try {
-      await room.localParticipant.setMicrophoneEnabled(true);
-      syncLocalMicUi();
+      if (hasPreflight && preflightTracks) {
+        const pub = await publishPreflightTracks(room, preflightTracks, publishCamera, roomId);
+        publishedPreflightAudio = pub.localAudio;
+        publishedPreflightVideo = pub.localVideo;
+        syncLocalMicUi();
+        scheduleAttachFlush("preflight_initial_publish");
+      } else {
+        await room.localParticipant.setMicrophoneEnabled(true);
+        syncLocalMicUi();
+      }
     } catch (err) {
-      console.warn("[LiveKit] Could not enable mic", err);
+      console.warn("[LiveKit] Could not publish mic", err);
       audioLog("mic_enable_error", { room_id: roomId, message: err instanceof Error ? err.message : String(err) });
     }
   }
 
-  if (publishCamera && canPublish) {
+  if (publishCamera && canPublish && !hasPreflight) {
     try {
       await room.localParticipant.setCameraEnabled(true);
       mehfilLog("camera_publish_ok", { room_id: roomId, phase: "initial_enable" });
@@ -895,7 +970,12 @@ export async function connectToMehfil(
 
     async setMicEnabled(enabled: boolean) {
       try {
-        await room.localParticipant.setMicrophoneEnabled(enabled);
+        if (publishedPreflightAudio) {
+          if (enabled) await publishedPreflightAudio.unmute();
+          else await publishedPreflightAudio.mute();
+        } else {
+          await room.localParticipant.setMicrophoneEnabled(enabled);
+        }
         audioLog("set_mic", { room_id: roomId, enabled });
         syncLocalMicUi();
       } catch (err) {
@@ -938,7 +1018,11 @@ export async function connectToMehfil(
     },
 
     async verifyHostTracksPublished(needCamera: boolean) {
-      return verifyHostPublish(room, { needCamera, roomId });
+      return verifyHostPublish(room, {
+        needCamera,
+        roomId,
+        republishPreflight: hasPreflight ? republishPreflight : undefined,
+      });
     },
 
     bindVideoElements(opts: Partial<{ local: HTMLElement | null; remote: HTMLElement | null }>) {
@@ -954,7 +1038,12 @@ export async function connectToMehfil(
 
     async setCameraEnabled(enabled: boolean) {
       try {
-        await room.localParticipant.setCameraEnabled(enabled);
+        if (publishedPreflightVideo) {
+          if (enabled) await publishedPreflightVideo.unmute();
+          else await publishedPreflightVideo.mute();
+        } else {
+          await room.localParticipant.setCameraEnabled(enabled);
+        }
         syncPublishedVideos("camera_toggle");
       } catch (err) {
         console.warn("[LiveKit] setCameraEnabled error", err);

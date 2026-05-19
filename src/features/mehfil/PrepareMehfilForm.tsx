@@ -3,6 +3,7 @@
  */
 import { useMemo, useState } from "react";
 import { MehfilStudioPreflight } from "@/features/mehfil/MehfilStudioPreflight";
+import { useMehfilMediaContext } from "@/features/mehfil/MehfilMediaContext";
 import { useLocation } from "wouter";
 import { motion } from "framer-motion";
 import {
@@ -51,6 +52,7 @@ export function PrepareMehfilForm() {
   const [, setLocation] = useLocation();
   const create = useCreateMehfil();
   const me = getCurrentUserId();
+  const { setPreflightStream } = useMehfilMediaContext();
 
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -125,7 +127,10 @@ export function PrepareMehfilForm() {
       <MehfilStudioPreflight
         mehfilTitle={preflightMehfil.title}
         onBack={() => setPreflightMehfil(null)}
-        onEnter={() => setLocation(`/mehfil/${preflightMehfil.id}`)}
+        onEnter={(stream) => {
+          setPreflightStream(stream);
+          setLocation(`/mehfil/${preflightMehfil.id}`);
+        }}
       />
     );
   }

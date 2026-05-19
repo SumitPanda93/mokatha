@@ -25,6 +25,7 @@ import {
   type MehfilLiveKitOpts,
 } from "@/lib/livekit";
 import { useMehfilMediaState } from "@/features/mehfil/useMehfilMediaState";
+import { useMehfilMediaContext } from "@/features/mehfil/MehfilMediaContext";
 
 export type PresenceRole = "host" | "speaker" | "listener";
 
@@ -91,6 +92,9 @@ export function useMehfilRoomSession(
   const publishGateRef = useRef(false);
   const lkReadyWaitersRef = useRef<Array<(room: LKRoom | null) => void>>([]);
   const media = useMehfilMediaState();
+  const mehfilMedia = useMehfilMediaContext();
+  const [localVideoPlaying, setLocalVideoPlaying] = useState(false);
+  const [remoteVideoPlaying, setRemoteVideoPlaying] = useState(false);
 
   const lkCbRef = useRef({
     setLkConnState: (_s: ConnectionState) => {},
@@ -109,13 +113,24 @@ export function useMehfilRoomSession(
   const isHost = !!me && !!mehfil && me === mehfil.hostId;
   const studio = mehfil?.sessionMode === "studio";
 
+  const preflightForLiveKit = useCallback(() => {
+    const p = mehfilMedia.getPreflightMedia();
+    if (!p) return null;
+    return { videoTrack: p.videoTrack, audioTrack: p.audioTrack };
+  }, [mehfilMedia]);
+
   const liveKitOptsFor = useCallback(
-    (wantPublish: boolean): MehfilLiveKitOpts => ({
-      publishCamera: Boolean(studio && wantPublish && isHost),
-      remoteHostIdentity:
-        studio && me && mehfil?.hostId && me !== mehfil.hostId ? mehfil.hostId : null,
-    }),
-    [studio, isHost, me, mehfil?.hostId],
+    (wantPublish: boolean): MehfilLiveKitOpts => {
+      const preflight =
+        studio && wantPublish && isHost ? preflightForLiveKit() : null;
+      return {
+        publishCamera: Boolean(studio && wantPublish && isHost),
+        remoteHostIdentity:
+          studio && me && mehfil?.hostId && me !== mehfil.hostId ? mehfil.hostId : null,
+        preflightTracks: preflight,
+      };
+    },
+    [studio, isHost, me, mehfil?.hostId, preflightForLiveKit],
   );
 
   const [hostCameraOn, setHostCameraOn] = useState(() => Boolean(studio && isHost));
@@ -250,7 +265,7 @@ export function useMehfilRoomSession(
           await ctrl.setMicEnabled(false);
           setMuted(true);
         }
-        if (studio && isHost && wantPublish) {
+        if (studio && isHost && wantPublish && !preflightForLiveKit()) {
           await ctrl.setCameraEnabled(hostCameraOn);
           bindVideoMountsToLiveKit();
         }
@@ -264,11 +279,12 @@ export function useMehfilRoomSession(
         lkReconnectScheduledRef.current = null;
       }
     };
-  }, [joined, isHost, myEntry?.status, mehfilId, me, studio, liveKitOptsFor, hostCameraOn, bindVideoMountsToLiveKit, resolveLkWaiters]);
+  }, [joined, isHost, myEntry?.status, mehfilId, me, studio, liveKitOptsFor, hostCameraOn, bindVideoMountsToLiveKit, resolveLkWaiters, preflightForLiveKit]);
 
   useEffect(() => {
     if (!joined || !lkConnected || !livekitRef.current || !studio || !isHost) return;
     void livekitRef.current.setCameraEnabled(hostCameraOn);
+    if (!hostCameraOn) setLocalVideoPlaying(false);
   }, [joined, lkConnected, studio, isHost, hostCameraOn]);
 
 
@@ -371,6 +387,9 @@ export function useMehfilRoomSession(
 
   const fullMediaReset = useCallback(() => {
     media.reset();
+    mehfilMedia.clearPreflightMedia();
+    setLocalVideoPlaying(false);
+    setRemoteVideoPlaying(false);
     joinCycleStartedRef.current = false;
     lkPublishModeRef.current = null;
     if (lkReconnectScheduledRef.current) {
@@ -386,7 +405,7 @@ export function useMehfilRoomSession(
     setLkRoomReady(0);
     setLkConnState(null);
     setAudioBlocked(false);
-  }, [media]);
+  }, [media, mehfilMedia]);
 
   const teardown = useCallback(() => {
     if (import.meta.env.DEV) console.info("[mehfil:session] teardown");
@@ -485,13 +504,19 @@ export function useMehfilRoomSession(
         }
         if (studio && isHost && canPublish) {
           media.transition("publishing");
-          await room.setCameraEnabled(true);
+          const hasPreflight = Boolean(preflightForLiveKit());
+          if (!hasPreflight) {
+            await room.setCameraEnabled(true);
+          }
           setHostCameraOn(true);
           bindVideoMountsToLiveKit();
           const pub = await room.verifyHostTracksPublished(true);
           if (pub.ok) {
             media.transition("published");
+            setLocalVideoPlaying(true);
           } else if (pub.ok === false) {
+            if (pub.cameraFailed) toast.error("Camera failed to publish");
+            if (pub.micFailed) toast.error("Microphone failed to publish");
             media.markFailed({
               camera: pub.cameraFailed ? "Camera failed to publish" : undefined,
               mic: pub.micFailed ? "Microphone failed to publish" : undefined,
@@ -585,7 +610,7 @@ export function useMehfilRoomSession(
       });
 
     channelRef.current = channel;
-  }, [me, myUser, mehfil, mehfilId, isHost, myEntry?.status, onMicrophoneEnabledChanged, liveKitOptsFor, studio, bindVideoMountsToLiveKit, media, resolveLkWaiters]);
+  }, [me, myUser, mehfil, mehfilId, isHost, myEntry?.status, onMicrophoneEnabledChanged, liveKitOptsFor, studio, bindVideoMountsToLiveKit, media, resolveLkWaiters, preflightForLiveKit]);
 
   /** Studio host: connect → verify publish → only then mark mehfil LIVE. */
   const startHostMehfilLive = useCallback(
@@ -756,6 +781,32 @@ export function useMehfilRoomSession(
     lkRoomReady,
     mediaPhase: media.phase,
     mediaFailure: media.failure,
+    preflightStream: mehfilMedia.preflight?.stream ?? null,
+    localVideoPlaying,
+    setLocalVideoPlaying,
+    remoteVideoPlaying,
+    setRemoteVideoPlaying,
+    retryHostPublish: async () => {
+      const lk = livekitRef.current;
+      if (!lk) return;
+      media.transition("publishing");
+      const pub = await lk.verifyHostTracksPublished(true);
+      if (pub.ok) {
+        media.transition("published");
+        setLocalVideoPlaying(true);
+        bindVideoMountsToLiveKit();
+      } else if (pub.ok === false) {
+        if (pub.cameraFailed) toast.error("Camera failed to publish");
+        if (pub.micFailed) toast.error("Microphone failed to publish");
+        media.markFailed({
+          camera: pub.cameraFailed ? "Camera failed to publish" : undefined,
+          mic: pub.micFailed ? "Microphone failed to publish" : undefined,
+        });
+      }
+    },
+    retryRemotePlayback: () => {
+      livekitRef.current?.ensureRemotePlayback("user_retry");
+    },
     startHostMehfilLive,
   };
 }
