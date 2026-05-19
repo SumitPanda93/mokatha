@@ -110,9 +110,9 @@ export function useMehfilRoomSession(
     [studio, isHost, me, mehfil?.hostId],
   );
 
-  const [hostCameraOn, setHostCameraOn] = useState(false);
+  const [hostCameraOn, setHostCameraOn] = useState(() => Boolean(studio && isHost));
   useEffect(() => {
-    setHostCameraOn(Boolean(studio && isHost));
+    if (studio && isHost) setHostCameraOn(true);
   }, [studio, isHost]);
 
   const bindLiveKitVideo = useCallback((local: HTMLElement | null, remote: HTMLElement | null) => {
@@ -361,6 +361,7 @@ export function useMehfilRoomSession(
     if (joinCycleStartedRef.current) return;
     joinCycleStartedRef.current = true;
     if (import.meta.env.DEV) console.info("[mehfil:session] join_start", { mehfil_id: mehfilId });
+    if (studio && isHost) setHostCameraOn(true);
     setJoined(true);
     earnInkPoints(me, 15).catch(console.warn);
 
@@ -378,12 +379,15 @@ export function useMehfilRoomSession(
         onAudioBlocked: () => setAudioBlocked(true),
         onReconnecting: () => toast("Reconnecting audio…", { duration: 1900 }),
         onReconnected: () => toast.success("Audio reconnected", { duration: 1600 }),
-      }, liveKitOptsFor(canPublish)).then((room) => {
-        if (room) {
-          livekitRef.current = room;
-          lkPublishModeRef.current = canPublish;
-          room.primeRemotePlayback("post_join_handshake");
+      }, liveKitOptsFor(canPublish)).then(async (room) => {
+        if (!room) return;
+        livekitRef.current = room;
+        lkPublishModeRef.current = canPublish;
+        if (studio && isHost && canPublish) {
+          await room.setCameraEnabled(true);
+          setHostCameraOn(true);
         }
+        room.primeRemotePlayback("post_join_handshake");
       });
     }
 
@@ -460,7 +464,7 @@ export function useMehfilRoomSession(
       });
 
     channelRef.current = channel;
-  }, [me, myUser, mehfil, mehfilId, isHost, myEntry?.status, onMicrophoneEnabledChanged, liveKitOptsFor]);
+  }, [me, myUser, mehfil, mehfilId, isHost, myEntry?.status, onMicrophoneEnabledChanged, liveKitOptsFor, studio]);
 
   const leaveRoom = useCallback(() => {
     setSupportMoment(null);
@@ -469,10 +473,16 @@ export function useMehfilRoomSession(
       supportDismissTimerRef.current = null;
     }
     teardown();
+    joinCycleStartedRef.current = false;
+    lkPublishModeRef.current = null;
     endedRef.current = false;
     sawLiveRef.current = false;
+    setJoined(false);
+    setLkConnState(null);
+    setMuted(false);
+    if (studio && isHost) setHostCameraOn(true);
     navigateToMehfilList();
-  }, [teardown, navigateToMehfilList]);
+  }, [teardown, navigateToMehfilList, studio, isHost]);
 
   const sendChat = useCallback(() => {
     if (!draft.trim() || !channelRef.current || !me || !myUser) return;

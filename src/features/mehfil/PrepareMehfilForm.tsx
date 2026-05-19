@@ -106,7 +106,7 @@ export function PrepareMehfilForm() {
     create.mutate(payload, {
       onSuccess: (m) => {
         toast.success("Mehfil created");
-        setLocation(`/mehfil/host/${m.id}`);
+        setLocation(`/mehfil/${m.id}`);
       },
       onError: (err: Error) => toast.error(`Could not create Mehfil: ${err.message}`),
     });
