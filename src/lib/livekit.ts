@@ -202,9 +202,16 @@ async function publishPreflightTracks(
     preflight.audioTrack.readyState === "live" &&
     countActivePublications(room, Track.Kind.Audio) === 0
   ) {
-    localAudio = new LocalAudioTrack(preflight.audioTrack, undefined, true);
-    await lp.publishTrack(localAudio);
-    mehfilLog("preflight_audio_published", { room_id: roomId });
+    try {
+      const pub = await lp.publishTrack(preflight.audioTrack, { source: Track.Source.Microphone });
+      localAudio = pub.track as LocalAudioTrack;
+      mehfilLog("preflight_audio_published", { room_id: roomId });
+    } catch (e) {
+      mehfilLog("preflight_audio_publish_error", {
+        room_id: roomId,
+        message: e instanceof Error ? e.message : String(e),
+      });
+    }
   }
 
   if (
@@ -213,9 +220,16 @@ async function publishPreflightTracks(
     preflight.videoTrack.readyState === "live" &&
     countActivePublications(room, Track.Kind.Video) === 0
   ) {
-    localVideo = new LocalVideoTrack(preflight.videoTrack, undefined, true);
-    await lp.publishTrack(localVideo);
-    mehfilLog("preflight_video_published", { room_id: roomId });
+    try {
+      const pub = await lp.publishTrack(preflight.videoTrack, { source: Track.Source.Camera });
+      localVideo = pub.track as LocalVideoTrack;
+      mehfilLog("preflight_video_published", { room_id: roomId });
+    } catch (e) {
+      mehfilLog("preflight_video_publish_error", {
+        room_id: roomId,
+        message: e instanceof Error ? e.message : String(e),
+      });
+    }
   }
 
   return { localVideo, localAudio };
@@ -253,7 +267,9 @@ export async function connectToMehfil(
   opts: MehfilLiveKitOpts = {},
 ): Promise<LiveKitRoom | null> {
   if (!LIVEKIT_URL) {
-    console.warn("[LiveKit] VITE_LIVEKIT_URL not set — audio disabled.");
+    const err = new Error("VITE_LIVEKIT_URL is not set — Mehfil studio cannot connect.");
+    console.warn("[LiveKit]", err.message);
+    callbacks.onError?.(err);
     return null;
   }
 
@@ -925,6 +941,16 @@ export async function connectToMehfil(
         publishedPreflightVideo = pub.localVideo;
         syncLocalMicUi();
         scheduleAttachFlush("preflight_initial_publish");
+        if (!publishedPreflightAudio && preflightTracks.audioTrack?.readyState === "live") {
+          mehfilLog("preflight_audio_fallback_enable", { room_id: roomId });
+          await room.localParticipant.setMicrophoneEnabled(true);
+          syncLocalMicUi();
+        }
+        if (publishCamera && !publishedPreflightVideo && preflightTracks.videoTrack?.readyState === "live") {
+          mehfilLog("preflight_video_fallback_enable", { room_id: roomId });
+          await room.localParticipant.setCameraEnabled(true);
+          scheduleAttachFlush("preflight_camera_fallback");
+        }
       } else {
         await room.localParticipant.setMicrophoneEnabled(true);
         syncLocalMicUi();
