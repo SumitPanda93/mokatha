@@ -51,6 +51,27 @@ export function presenceRoleFor(meHost: boolean, queueSpeaking: boolean): Presen
   return "listener";
 }
 
+export type JoinCycleGuardResult = {
+  /** Whether joinRoom should return early without starting a new cycle */
+  block: boolean;
+  /** Whether joinCycleStarted should be reset before continuing */
+  resetStarted: boolean;
+};
+
+/** Pure guard for duplicate Supabase channels / LiveKit connects when joinRoom races. */
+export function evaluateJoinCycleGuard(
+  joinCycleStarted: boolean,
+  hasLiveKitRoom: boolean,
+): JoinCycleGuardResult {
+  if (joinCycleStarted && hasLiveKitRoom) {
+    return { block: true, resetStarted: false };
+  }
+  if (joinCycleStarted && !hasLiveKitRoom) {
+    return { block: false, resetStarted: true };
+  }
+  return { block: false, resetStarted: false };
+}
+
 export function useMehfilRoomSession(
   mehfilId: string,
   mehfil: Mehfil | undefined,
@@ -613,11 +634,9 @@ export function useMehfilRoomSession(
 
   const joinRoom = useCallback(async () => {
     if (!me || !mehfil) return;
-    if (joinCycleStartedRef.current && livekitRef.current) return;
-    if (joinCycleStartedRef.current && !livekitRef.current) {
-      joinCycleStartedRef.current = false;
-    }
-    if (joinCycleStartedRef.current) return;
+    const guard = evaluateJoinCycleGuard(joinCycleStartedRef.current, Boolean(livekitRef.current));
+    if (guard.block) return;
+    if (guard.resetStarted) joinCycleStartedRef.current = false;
     joinCycleStartedRef.current = true;
     if (import.meta.env.DEV) console.info("[mehfil:session] join_start", { mehfil_id: mehfilId });
     if (studio && isHost) setHostCameraOn(true);

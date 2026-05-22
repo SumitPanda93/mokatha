@@ -3,11 +3,47 @@
   "short_name": "Mo Katha",
   "description": "A quiet salon for Odia voice, poetry, and storytelling.",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
   "background_color": "#F5F3EF",
   "theme_color": "#F76A4A",
-  "orientation": "portrait",
+  "orientation": "portrait-primary",
+  "lang": "en",
+  "categories": ["social", "entertainment", "education"],
   "icons": [
-    { "src": "/favicon.svg", "type": "image/svg+xml", "sizes": "any", "purpose": "any maskable" }
+    {
+      "src": "/favicon.svg",
+      "type": "image/svg+xml",
+      "sizes": "any",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-192.png",
+      "type": "image/png",
+      "sizes": "192x192",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Create Post",
+      "short_name": "Create",
+      "description": "Create a new voice, text, or story post",
+      "url": "/create",
+      "icons": [{ "src": "/favicon.svg", "sizes": "any" }]
+    },
+    {
+      "name": "Explore Feed",
+      "short_name": "Feed",
+      "description": "Browse the latest from Mo Katha creators",
+      "url": "/",
+      "icons": [{ "src": "/favicon.svg", "sizes": "any" }]
+    }
   ]
 }
