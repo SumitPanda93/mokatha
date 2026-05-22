@@ -574,7 +574,24 @@ export default function MehfilRoomPage() {
             Tap to hear the room
           </motion.button>
         )}
-        {!session.audioBlocked && session.lkConnecting && (
+        {!session.audioBlocked && session.lkConnectionFailed && (
+          <motion.div
+            key="lkf"
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            transition={OVERLAY_FADE}
+            className="relative z-40 mx-4 mt-3 py-2.5 px-4 rounded-2xl text-center text-[11px] border border-rose-400/25 bg-rose-500/10"
+            style={{ color: "rgba(245,243,239,0.72)" }}
+          >
+            {session.mediaFailure?.remote?.includes("VITE_LIVEKIT_URL")
+              ? "Live audio is not configured. Set VITE_LIVEKIT_URL in .env.local and restart the dev server."
+              : session.mediaFailure?.remote === "livekit_not_configured"
+                ? "Live audio is not configured for this environment."
+                : session.mediaFailure?.mic ?? session.mediaFailure?.remote ?? "Could not connect to live audio."}
+          </motion.div>
+        )}
+        {!session.audioBlocked && !session.lkConnectionFailed && session.lkConnecting && (
           <motion.div
             key="lkc"
             initial={{ opacity: 0, y: -8 }}

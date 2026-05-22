@@ -105,10 +105,24 @@ export function useMehfilRoomSession(
   lkCbRef.current.setLkConnState = setLkConnState;
   lkCbRef.current.setAudioBlocked = setAudioBlocked;
 
-  const onMicrophoneEnabledChanged = useCallback((enabled: boolean) => {
-    if (!publishGateRef.current) return;
-    setMuted(!enabled);
+  const syncMutedFromLiveKit = useCallback(() => {
+    if (!publishGateRef.current || !livekitRef.current) return;
+    try {
+      const lp = livekitRef.current.room.localParticipant;
+      let micAudible = false;
+      lp.audioTrackPublications.forEach((pub) => {
+        if (pub.track && !pub.isMuted) micAudible = true;
+      });
+      if (!micAudible) micAudible = lp.isMicrophoneEnabled;
+      setMuted(!micAudible);
+    } catch {
+      /* ignore */
+    }
   }, []);
+
+  const onMicrophoneEnabledChanged = useCallback(() => {
+    syncMutedFromLiveKit();
+  }, [syncMutedFromLiveKit]);
 
   const sawLiveRef = useRef(false);
 
@@ -238,9 +252,7 @@ export function useMehfilRoomSession(
         const ctrl = await connectToMehfil(mehfilId, me, wantPublish, {
           onConnectionStateChange: (state) => cbs.setLkConnState(state),
           onParticipantCountChange: () => {},
-          onMicrophoneEnabledChanged: (enabled) => {
-            if (publishGateRef.current) setMuted(!enabled);
-          },
+          onMicrophoneEnabledChanged,
           onError: (err) => {
             console.error("[LiveKit] reconnect error", err);
             logOpsEvent("livekit_reconnect_failed", { mehfil_id: mehfilId, message: err.message });
@@ -306,30 +318,18 @@ export function useMehfilRoomSession(
 
   useEffect(() => {
     if (!joined || !lkConnected || !livekitRef.current || !canPublishNow) return;
-    const tick = () => {
-      try {
-        const micOn = livekitRef.current?.room.localParticipant.isMicrophoneEnabled;
-        if (typeof micOn === "boolean") setMuted(!micOn);
-      } catch {
-        /* ignore */
-      }
-    };
+    const tick = () => syncMutedFromLiveKit();
     const id = window.setInterval(tick, 2200);
     tick();
     return () => clearInterval(id);
-  }, [joined, lkConnected, canPublishNow]);
+  }, [joined, lkConnected, canPublishNow, syncMutedFromLiveKit]);
 
   useEffect(() => {
     if (!lkConnected || !livekitRef.current) return;
     const publishing = isHost || myEntry?.status === "speaking";
     if (!publishing) return;
-    try {
-      const micOn = livekitRef.current.room.localParticipant.isMicrophoneEnabled;
-      setMuted(!micOn);
-    } catch {
-      /* ignore */
-    }
-  }, [lkConnected, isHost, myEntry?.status]);
+    syncMutedFromLiveKit();
+  }, [lkConnected, isHost, myEntry?.status, syncMutedFromLiveKit]);
 
   useEffect(() => {
     const onVis = () => {
@@ -478,11 +478,12 @@ export function useMehfilRoomSession(
     async (room: LKRoom, canPublish: boolean) => {
       livekitRef.current = room;
       lkPublishModeRef.current = canPublish;
+      setLkConnState(room.room.state);
       setLkRoomReady((n) => n + 1);
       bindVideoMountsToLiveKit();
       if (canPublish && isHost) {
         await room.setMicEnabled(true);
-        setMuted(false);
+        syncMutedFromLiveKit();
       }
       if (studio && isHost && canPublish) {
         media.transition("publishing");
@@ -514,7 +515,7 @@ export function useMehfilRoomSession(
       room.primeRemotePlayback("post_join_handshake");
       resolveLkWaiters(room);
     },
-    [isHost, studio, bindVideoMountsToLiveKit, media, preflightForLiveKit, resolveLkWaiters],
+    [isHost, studio, bindVideoMountsToLiveKit, media, preflightForLiveKit, resolveLkWaiters, syncMutedFromLiveKit],
   );
 
   const connectLiveKitSession = useCallback(
@@ -586,7 +587,9 @@ export function useMehfilRoomSession(
 
       if (!room) {
         media.markFailed({ remote: "livekit_connect_failed" });
+        setLkConnState(ConnectionState.Disconnected);
         joinCycleStartedRef.current = false;
+        toast.error("Could not connect to live audio. Check your network and LiveKit settings.", { duration: 5000 });
         resolveLkWaiters(null);
         return null;
       }
@@ -862,12 +865,14 @@ export function useMehfilRoomSession(
   });
 
   const lkMediaReady = ["connected", "published", "subscribed"].includes(media.phase);
+  const lkConnectionFailed = media.phase === "failed" || Boolean(media.failure?.remote);
   const lkConnecting =
     isLiveKitConfigured() &&
     joined &&
     !lkConnected &&
     lkConnState !== ConnectionState.Reconnecting &&
-    !lkMediaReady;
+    !lkMediaReady &&
+    !lkConnectionFailed;
   const lkReconnecting = lkConnState === ConnectionState.Reconnecting;
 
   return {
@@ -906,6 +911,7 @@ export function useMehfilRoomSession(
     gatheredVoices,
     benchListeners,
     lkConnecting,
+    lkConnectionFailed,
     lkConnected,
     lkReconnecting,
     joinRoom,

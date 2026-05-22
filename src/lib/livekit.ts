@@ -115,6 +115,16 @@ export type HostPublishResult =
 
 const HOST_PUBLISH_RETRY_MS = [200, 600, 1200] as const;
 
+/** Published local tracks (mute state ignored — used for publish verification). */
+function countPublishedTracks(room: Room, kind: Track.Kind): number {
+  let n = 0;
+  room.localParticipant.trackPublications.forEach((pub) => {
+    if (pub.kind !== kind) return;
+    if (pub.track) n += 1;
+  });
+  return n;
+}
+
 function countActivePublications(
   room: Room,
   kind: Track.Kind,
@@ -125,6 +135,51 @@ function countActivePublications(
     if (pub.track && !pub.isMuted) n += 1;
   });
   return n;
+}
+
+async function unmuteLocalAudioPublications(room: Room): Promise<void> {
+  for (const pub of room.localParticipant.audioTrackPublications.values()) {
+    const track = pub.track;
+    if (!track || !("unmute" in track)) continue;
+    try {
+      await (track as LocalAudioTrack).unmute();
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+/** Host mic gate — preflight publish, then SDK enable*, always unmute published audio. */
+async function ensureHostMicPublished(
+  room: Room,
+  preflight: MehfilPreflightTracks | null,
+  roomId: string,
+): Promise<boolean> {
+  if (countPublishedTracks(room, Track.Kind.Audio) > 0) {
+    await unmuteLocalAudioPublications(room);
+    return true;
+  }
+  if (preflight?.audioTrack?.readyState === "live") {
+    const pub = await publishPreflightTracks(room, preflight, false, roomId);
+    if (pub.localAudio) {
+      try {
+        await pub.localAudio.unmute();
+      } catch {
+        /* ignore */
+      }
+      return true;
+    }
+  }
+  try {
+    await room.localParticipant.setMicrophoneEnabled(true);
+    await unmuteLocalAudioPublications(room);
+  } catch (e) {
+    mehfilLog("host_mic_enable_error", {
+      room_id: roomId,
+      message: e instanceof Error ? e.message : String(e),
+    });
+  }
+  return countPublishedTracks(room, Track.Kind.Audio) > 0;
 }
 
 /** Host publish gate — retries publish (preflight) or enable* before reporting failure. */
@@ -142,8 +197,8 @@ export async function verifyHostPublish(
   const usePreflight = Boolean(opts.republishPreflight);
 
   const attempt = async (label: string) => {
-    let micOk = countActivePublications(room, Track.Kind.Audio) > 0;
-    let camOk = !needCamera || countActivePublications(room, Track.Kind.Video) > 0;
+    let micOk = countPublishedTracks(room, Track.Kind.Audio) > 0;
+    let camOk = !needCamera || countPublishedTracks(room, Track.Kind.Video) > 0;
     if (!micOk || (needCamera && !camOk)) {
       mehfilLog("host_publish_retry", { room_id: roomId, phase: label, preflight: usePreflight });
       try {
@@ -153,12 +208,14 @@ export async function verifyHostPublish(
           if (!micOk) await room.localParticipant.setMicrophoneEnabled(true);
           if (needCamera && !camOk) await room.localParticipant.setCameraEnabled(true);
         }
+        if (!micOk) await unmuteLocalAudioPublications(room);
       } catch (e) {
         mehfilLog("host_publish_error", { room_id: roomId, message: e instanceof Error ? e.message : String(e) });
       }
-      micOk = countActivePublications(room, Track.Kind.Audio) > 0;
-      camOk = !needCamera || countActivePublications(room, Track.Kind.Video) > 0;
+      micOk = countPublishedTracks(room, Track.Kind.Audio) > 0;
+      camOk = !needCamera || countPublishedTracks(room, Track.Kind.Video) > 0;
     }
+    if (micOk) await unmuteLocalAudioPublications(room);
     if (micOk) mehfilLog("mic_publish_ok", { room_id: roomId, phase: label });
     if (needCamera && camOk) mehfilLog("camera_publish_ok", { room_id: roomId, phase: label });
     return { micOk, camOk };
@@ -204,11 +261,16 @@ async function publishPreflightTracks(
   if (
     preflight.audioTrack &&
     preflight.audioTrack.readyState === "live" &&
-    countActivePublications(room, Track.Kind.Audio) === 0
+    countPublishedTracks(room, Track.Kind.Audio) === 0
   ) {
     try {
       const pub = await lp.publishTrack(preflight.audioTrack, { source: Track.Source.Microphone });
       localAudio = pub.track as LocalAudioTrack;
+      try {
+        await localAudio.unmute();
+      } catch {
+        /* ignore */
+      }
       mehfilLog("preflight_audio_published", { room_id: roomId });
     } catch (e) {
       mehfilLog("preflight_audio_publish_error", {
@@ -222,7 +284,7 @@ async function publishPreflightTracks(
     needCamera &&
     preflight.videoTrack &&
     preflight.videoTrack.readyState === "live" &&
-    countActivePublications(room, Track.Kind.Video) === 0
+    countPublishedTracks(room, Track.Kind.Video) === 0
   ) {
     try {
       const pub = await lp.publishTrack(preflight.videoTrack, { source: Track.Source.Camera });
@@ -315,8 +377,8 @@ export async function connectToMehfil(
 
   const republishPreflight = async () => {
     if (!preflightTracks || !canPublish) return;
-    const micMissing = countActivePublications(room, Track.Kind.Audio) === 0;
-    const camMissing = publishCamera && countActivePublications(room, Track.Kind.Video) === 0;
+    const micMissing = countPublishedTracks(room, Track.Kind.Audio) === 0;
+    const camMissing = publishCamera && countPublishedTracks(room, Track.Kind.Video) === 0;
     if (!micMissing && !camMissing) return;
     const next = await publishPreflightTracks(room, preflightTracks, publishCamera, roomId);
     if (next.localAudio) publishedPreflightAudio = next.localAudio;
@@ -943,12 +1005,14 @@ export async function connectToMehfil(
     console.log(`[LiveKit] connected to room ${roomId} as ${userId}`);
     logOpsEvent("livekit_connected", { room_id: roomId, can_publish: canPublish });
     audioLog("connected", { room_id: roomId, can_publish: canPublish, identity: userId });
+    callbacks.onConnectionStateChange?.(room.state);
     if (import.meta.env.DEV && remoteHostIdNorm) {
       const ids = [...room.remoteParticipants.values()].map((p) => normId(p.identity));
       console.debug("[LiveKit:dev] remote identities", { expect_host: remoteHostIdNorm, remote_participants: ids });
     }
 
     await room.startAudio().catch(() => {});
+    syncExistingRemoteAudio("connect_immediate");
 
     room.localParticipant.on(ParticipantEvent.LocalTrackPublished, syncLocalMicUi);
     room.localParticipant.on(ParticipantEvent.LocalTrackUnpublished, syncLocalMicUi);
@@ -990,24 +1054,31 @@ export async function connectToMehfil(
         publishedPreflightVideo = pub.localVideo;
         syncLocalMicUi();
         scheduleAttachFlush("preflight_initial_publish");
-        if (!publishedPreflightAudio && preflightTracks.audioTrack?.readyState === "live") {
+        const micLive = await ensureHostMicPublished(room, preflightTracks, roomId);
+        if (!micLive) {
           mehfilLog("preflight_audio_fallback_enable", { room_id: roomId });
-          await room.localParticipant.setMicrophoneEnabled(true);
-          syncLocalMicUi();
         }
         if (publishCamera && !publishedPreflightVideo && preflightTracks.videoTrack?.readyState === "live") {
           mehfilLog("preflight_video_fallback_enable", { room_id: roomId });
           await room.localParticipant.setCameraEnabled(true);
           scheduleAttachFlush("preflight_camera_fallback");
         }
+        syncLocalMicUi();
       } else {
-        await room.localParticipant.setMicrophoneEnabled(true);
+        const micLive = await ensureHostMicPublished(room, null, roomId);
+        if (!micLive) {
+          audioLog("mic_enable_error", { room_id: roomId, message: "mic_not_published_after_enable" });
+        }
         syncLocalMicUi();
       }
     } catch (err) {
       console.warn("[LiveKit] Could not publish mic", err);
       audioLog("mic_enable_error", { room_id: roomId, message: err instanceof Error ? err.message : String(err) });
+      callbacks.onError?.(err instanceof Error ? err : new Error(String(err)));
     }
+  } else {
+    syncExistingRemoteAudio("listener_post_publish");
+    scheduleAttachFlush("listener_post_publish");
   }
 
   if (publishCamera && canPublish && !hasPreflight) {
@@ -1115,7 +1186,7 @@ export async function connectToMehfil(
       try {
         if (publishedPreflightVideo) {
           if (enabled) {
-            if (countActivePublications(room, Track.Kind.Video) === 0 && preflightTracks?.videoTrack?.readyState === "live") {
+            if (countPublishedTracks(room, Track.Kind.Video) === 0 && preflightTracks?.videoTrack?.readyState === "live") {
               const pub = await room.localParticipant.publishTrack(preflightTracks.videoTrack, {
                 source: Track.Source.Camera,
               });
@@ -1126,7 +1197,7 @@ export async function connectToMehfil(
           } else {
             await publishedPreflightVideo.mute();
             try {
-              await room.localParticipant.unpublishTrack(publishedPreflightVideo);
+              await room.localParticipant.unpublishTrack(publishedPreflightVideo, false);
             } catch {
               /* ignore — may already be unpublished */
             }
