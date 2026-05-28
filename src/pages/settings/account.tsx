@@ -4,7 +4,7 @@ import { ArrowLeft, Camera, Check, Loader2, Eye, AlertTriangle, X } from "lucide
 import { motion, AnimatePresence } from "framer-motion";
 import { useTitle } from "@/hooks/useTitle";
 import {
-  useCurrentUser, uploadAvatar, updateUser, getCurrentUserId, useUpdateUser,
+  useCurrentUser, getCurrentUserId, useUpdateUser,
   checkHandleAvailable, useDeactivateAccount,
 } from "@/lib/store";
 import { toast } from "sonner";
@@ -106,7 +106,7 @@ function DeactivateSheet({ onClose, onConfirm, pending }: {
 export default function AccountSettings() {
   useTitle("Profile");
   const [, setLocation] = useLocation();
-  const { data: user, refetch } = useCurrentUser();
+  const { data: user } = useCurrentUser();
   const updateMutation = useUpdateUser();
   const deactivateMutation = useDeactivateAccount();
 
@@ -116,14 +116,11 @@ export default function AccountSettings() {
   const [location, setLocationField] = useState("");
   const [language, setLanguage]   = useState<"or" | "hi">("or");
   const [avatar, setAvatar]       = useState("");
-  const [uploading, setUploading] = useState(false);
   const [showDeactivate, setShowDeactivate] = useState(false);
 
   // Handle availability state
   const [handleStatus, setHandleStatus] = useState<"idle" | "checking" | "available" | "taken" | "invalid">("idle");
   const handleDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (user) {
@@ -134,7 +131,7 @@ export default function AccountSettings() {
       setLanguage(user.language ?? "or");
       setAvatar(user.avatarUrl);
     }
-  }, [user?.id]);
+  }, [user?.id, user?.avatarUrl]);
 
   // ── Handle change with debounced availability check ──────────────────────────
   const onHandleChange = useCallback((raw: string) => {
@@ -162,30 +159,6 @@ export default function AccountSettings() {
       }
     }, 500);
   }, [user]);
-
-  // ── Avatar upload ─────────────────────────────────────────────────────────────
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const me = getCurrentUserId();
-    if (!me) { toast.error("Sign in to upload a photo"); return; }
-    const localUrl = URL.createObjectURL(file);
-    setAvatar(localUrl);
-    setUploading(true);
-    try {
-      const url = await uploadAvatar(me, file);
-      setAvatar(url);
-      await updateUser(me, { avatarUrl: url });
-      await refetch();
-      toast.success("Photo updated");
-    } catch (err: any) {
-      toast.error(err.message ?? "Upload failed");
-      setAvatar(user?.avatarUrl ?? "");
-    } finally {
-      setUploading(false);
-      URL.revokeObjectURL(localUrl);
-    }
-  };
 
   // ── Save profile ──────────────────────────────────────────────────────────────
   const save = () => {
@@ -245,21 +218,22 @@ export default function AccountSettings() {
                 ? <img src={avatar} alt="" className="w-full h-full object-cover" />
                 : <div className="w-full h-full flex items-center justify-center text-[32px] text-muted-foreground">?</div>}
             </div>
-            {uploading && (
-              <div className="absolute inset-0 rounded-full bg-black/50 flex items-center justify-center">
-                <Loader2 size={20} className="text-white animate-spin" />
-              </div>
-            )}
             <button
-              onClick={() => fileInputRef.current?.click()}
-              disabled={uploading}
-              className="absolute bottom-0 right-0 w-8 h-8 rounded-full bg-foreground text-background flex items-center justify-center shadow-md hover:scale-105 transition-transform disabled:opacity-50"
+              type="button"
+              onClick={() => setLocation("/settings/avatar?return=/settings/account")}
+              className="absolute bottom-0 right-0 w-8 h-8 rounded-full bg-foreground text-background flex items-center justify-center shadow-md hover:scale-105 transition-transform"
+              aria-label="Edit profile photo"
             >
               <Camera size={14} />
             </button>
-            <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleFileChange} />
           </div>
-          <p className="text-[11px] text-muted-foreground mt-2">Tap camera to change photo</p>
+          <button
+            type="button"
+            onClick={() => setLocation("/settings/avatar?return=/settings/account")}
+            className="text-[11px] text-muted-foreground mt-2 hover:text-foreground transition-colors"
+          >
+            Tap camera to change photo
+          </button>
         </div>
 
         {/* "View as visitor" shortcut */}

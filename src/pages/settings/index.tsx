@@ -50,32 +50,38 @@ export default function SettingsHome() {
       <div className="px-5 pb-8 space-y-6">
         {/* Profile card */}
         {user && (
-          <Link href="/settings/account" className="block">
-            <div
-              className="rounded-2xl p-4 flex items-center gap-3.5 transition-opacity hover:opacity-95 active:opacity-90"
-              style={{ background: SETTINGS_CARD, border: `1px solid ${SETTINGS_BORDER}` }}
-            >
-              <div className="relative shrink-0">
-                <div
-                  className="w-[58px] h-[58px] rounded-full overflow-hidden"
-                  style={{ border: "2px solid rgba(201,168,76,0.35)" }}
-                >
-                  {user.avatarUrl ? (
-                    <img src={user.avatarUrl} alt="" className="w-full h-full object-cover" />
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center text-[22px]" style={{ background: "rgba(255,255,255,0.06)", color: SETTINGS_MUTED }}>
-                      ?
-                    </div>
-                  )}
-                </div>
-                <div
-                  className="absolute -bottom-0.5 -right-0.5 w-6 h-6 rounded-full flex items-center justify-center"
-                  style={{ background: "linear-gradient(135deg, #C9A84C, #E8B14A)", boxShadow: "0 2px 8px rgba(0,0,0,0.4)" }}
-                >
-                  <Camera size={11} className="text-[#0A0806]" strokeWidth={2.25} />
-                </div>
-              </div>
+          <div
+            className="rounded-2xl p-4 flex items-center gap-3.5"
+            style={{ background: SETTINGS_CARD, border: `1px solid ${SETTINGS_BORDER}` }}
+          >
+            <div className="relative shrink-0">
+              <Link
+                href="/settings/account"
+                className="block w-[58px] h-[58px] rounded-full overflow-hidden transition-opacity hover:opacity-95 active:opacity-90"
+                style={{ border: "2px solid rgba(201,168,76,0.35)" }}
+              >
+                {user.avatarUrl ? (
+                  <img src={user.avatarUrl} alt="" className="w-full h-full object-cover" />
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center text-[22px]" style={{ background: "rgba(255,255,255,0.06)", color: SETTINGS_MUTED }}>
+                    ?
+                  </div>
+                )}
+              </Link>
+              <Link
+                href="/settings/avatar?return=/settings"
+                className="absolute -bottom-0.5 -right-0.5 w-6 h-6 rounded-full flex items-center justify-center transition-transform hover:scale-105 active:scale-95"
+                style={{ background: "linear-gradient(135deg, #C9A84C, #E8B14A)", boxShadow: "0 2px 8px rgba(0,0,0,0.4)" }}
+                aria-label="Edit profile photo"
+              >
+                <Camera size={11} className="text-[#0A0806]" strokeWidth={2.25} />
+              </Link>
+            </div>
 
+            <Link
+              href="/settings/account"
+              className="flex-1 min-w-0 flex items-center gap-3.5 transition-opacity hover:opacity-95 active:opacity-90"
+            >
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-1.5">
                   <span className="text-[15px] font-['Inter'] font-medium truncate">{user.displayName}</span>
@@ -89,10 +95,9 @@ export default function SettingsHome() {
                   {extractRole(user.bio)}
                 </span>
               </div>
-
-              <ChevronRight size={16} style={{ color: SETTINGS_MUTED }} />
-            </div>
-          </Link>
+              <ChevronRight size={16} style={{ color: SETTINGS_MUTED }} className="shrink-0" />
+            </Link>
+          </div>
         )}
 
         {/* Account */}

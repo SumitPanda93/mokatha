@@ -47,6 +47,7 @@ import SettingsBlocked from "@/pages/settings/blocked";
 import SettingsMehfilPrefs from "@/pages/settings/mehfil-preferences";
 import SettingsFeedPrefs from "@/pages/settings/feed-preferences";
 import SettingsHelp from "@/pages/settings/help";
+import SettingsAvatar from "@/pages/settings/avatar";
 import Messages from "@/pages/messages";
 import Discover from "@/pages/discover";
 import CreateStoryRing from "@/pages/stories/create";
@@ -126,6 +127,7 @@ const SettingsBlockedRoute = withMobile(SettingsBlocked);
 const SettingsMehfilPrefsRoute = withMobile(SettingsMehfilPrefs);
 const SettingsFeedPrefsRoute = withMobile(SettingsFeedPrefs);
 const SettingsHelpRoute    = withMobile(SettingsHelp);
+const SettingsAvatarRoute  = withMobile(SettingsAvatar);
 const DiscoverRoute        = withMobile(Discover);
 const CreateStoryRingRoute = withMobile(CreateStoryRing);
 const NotFoundRoute        = withMobile(NotFound);
@@ -251,6 +253,7 @@ function Router() {
             {/* Settings */}
             <Route path="/settings" component={SettingsHomeRoute} />
             <Route path="/settings/account" component={SettingsAccountRoute} />
+            <Route path="/settings/avatar" component={SettingsAvatarRoute} />
             <Route path="/settings/privacy" component={SettingsPrivacyRoute} />
             <Route path="/settings/notifications" component={SettingsNotifsRoute} />
             <Route path="/settings/about" component={SettingsAboutRoute} />
