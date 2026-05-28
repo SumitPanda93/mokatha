@@ -1,234 +1,363 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Link } from "wouter";
-import { Radio, Mic, Plus, Users, Clock, MoreVertical, Trash2, Archive, ArchiveRestore, Ticket } from "lucide-react";
-import { motion, AnimatePresence } from "framer-motion";
+import { Search, Bell, Radio } from "lucide-react";
+import { motion } from "framer-motion";
 import { useTitle } from "@/hooks/useTitle";
-import { useMehfils, useUser, useDeleteMehfil, useArchiveMehfil, useMehfilRealtime, getCurrentUserId } from "@/lib/store";
+import {
+  useMehfils,
+  useMehfilsForHost,
+  useMehfilRealtime,
+  useCurrentUser,
+  useUnreadNotificationCount,
+  isMehfilDiscoveryExpired,
+  type Mehfil,
+} from "@/lib/store";
+import {
+  FEED_BG, FEED_BORDER, FEED_GOLD, FEED_MUTED, FEED_PURPLE, FEED_TEXT, MoKathaWordmark,
+} from "@/components/feed/home-feed-ui";
+import {
+  MEHFIL_TABS,
+  MEHFIL_CATEGORIES,
+  type MehfilTab,
+  type MehfilCategory,
+  matchesMehfilCategory,
+  isMehfilUpcoming,
+  isMehfilEnded,
+  HeroCarousel,
+  UpcomingMehfilCard,
+  TrendingMehfilCard,
+  HostMehfilRow,
+  HistoryMehfilRow,
+  CreateMehfilBanner,
+  SectionHeading,
+} from "@/components/mehfil/mehfil-list-ui";
 
-// ─── Creator menu ─────────────────────────────────────────────────────────────
-
-function CreatorMenu({ mehfilId, archived, onClose }: { mehfilId: string; archived?: boolean; onClose: () => void }) {
-  const del = useDeleteMehfil();
-  const arch = useArchiveMehfil();
-
-  return (
-    <motion.div
-      initial={{ opacity: 0, scale: 0.92, y: -4 }}
-      animate={{ opacity: 1, scale: 1, y: 0 }}
-      exit={{ opacity: 0, scale: 0.92, y: -4 }}
-      transition={{ duration: 0.12 }}
-      className="absolute top-9 right-0 z-30 min-w-[160px] rounded-xl bg-background border border-border shadow-xl overflow-hidden"
-      onClick={(e) => e.stopPropagation()}
-    >
-      <button
-        onClick={() => { arch.mutate({ id: mehfilId, archived: !archived }); onClose(); }}
-        className="w-full flex items-center gap-2.5 px-4 py-3 text-[13px] font-['Inter'] text-foreground hover:bg-muted/50 transition-colors"
-      >
-        {archived
-          ? <><ArchiveRestore size={14} className="text-sage" /> Restore</>
-          : <><Archive size={14} className="text-ochre" /> Archive</>}
-      </button>
-      <div className="border-t border-border/50" />
-      <button
-        onClick={() => {
-          if (confirm("Delete this Mehfil? This cannot be undone.")) {
-            del.mutate(mehfilId);
-            onClose();
-          }
-        }}
-        className="w-full flex items-center gap-2.5 px-4 py-3 text-[13px] font-['Inter'] text-destructive hover:bg-destructive/10 transition-colors"
-      >
-        <Trash2 size={14} /> Delete
-      </button>
-    </motion.div>
-  );
+function applyCategory(list: Mehfil[], category: MehfilCategory): Mehfil[] {
+  return list.filter((m) => matchesMehfilCategory(m, category));
 }
 
-// ─── Mehfil card ─────────────────────────────────────────────────────────────
-
-function MehfilCard({ m, index }: { m: any; index: number }) {
-  const { data: host } = useUser(m.hostId);
-  const [menuOpen, setMenuOpen] = useState(false);
-  const me = getCurrentUserId();
-  const isHost = !!me && me === m.hostId;
-  const startsAt = new Date(m.startsAt);
-  const isUpcoming = !m.isLive && startsAt > new Date();
-  const timeStr = startsAt.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
-  const dateStr = startsAt.toLocaleDateString("en-IN", { month: "short", day: "numeric" });
+function EmptyState({ tab }: { tab: MehfilTab }) {
+  const messages: Record<MehfilTab, { title: string; body: string }> = {
+    "For You": {
+      title: "No gatherings right now",
+      body: "When someone opens a Mehfil, a circle forms. Check back soon or host your own.",
+    },
+    Explore: {
+      title: "Nothing to explore yet",
+      body: "Public Mehfils will appear here as creators open rooms.",
+    },
+    "My Mehfils": {
+      title: "You haven't hosted yet",
+      body: "Start your first Mehfil and invite listeners into your circle.",
+    },
+    History: {
+      title: "No past Mehfils",
+      body: "Ended sessions appear here for replay and rediscovery.",
+    },
+  };
+  const { title, body } = messages[tab];
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: index * 0.05 }}
-    >
-      <div className="relative rounded-2xl overflow-hidden cursor-pointer group">
-        <Link href={`/mehfil/${m.id}`} className="block">
-          {/* Cover image */}
-          <img src={m.coverUrl} alt="" className="w-full h-[160px] object-cover group-hover:scale-[1.02] transition-transform duration-300" />
-          <div className="absolute inset-0" style={{ background: "linear-gradient(to top, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.2) 60%, transparent 100%)" }} />
-        </Link>
-
-        {/* Live badge */}
-        {m.isLive && (
-          <div className="absolute top-3 left-3 flex items-center gap-1.5 bg-destructive/90 backdrop-blur-sm text-white text-[10px] font-['Inter'] font-bold tracking-[0.1em] rounded-full px-2.5 py-1 pointer-events-none">
-            <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
-            LIVE
-          </div>
-        )}
-        {isUpcoming && !m.isLive && (
-          <div className="absolute top-3 left-3 flex items-center gap-1.5 bg-ochre/90 backdrop-blur-sm text-white text-[10px] font-['Inter'] font-bold tracking-[0.1em] rounded-full px-2.5 py-1 pointer-events-none">
-            <Clock size={10} />
-            {dateStr} · {timeStr}
-          </div>
-        )}
-
-        {/* Ticketed badge */}
-        {m.isTicketed && (m.ticketPrice ?? 0) > 0 && (
-          <div className="absolute top-3 left-3 mt-7 flex items-center gap-1 bg-black/55 backdrop-blur-sm text-white/80 text-[9px] font-['Inter'] tracking-[0.12em] rounded-full px-2 py-1 pointer-events-none"
-            style={{ top: m.isLive || (!m.isLive && new Date(m.startsAt) > new Date()) ? 36 : 12 }}>
-            <Ticket size={9} />
-            ₹{m.ticketPrice}
-          </div>
-        )}
-
-        {/* Language + creator menu */}
-        <div className="absolute top-3 right-3 flex items-center gap-1.5">
-          <div className="bg-black/50 backdrop-blur-sm text-white/80 text-[9px] font-['Inter'] tracking-[0.15em] uppercase rounded-full px-2 py-1">
-            {m.language === "or" ? "Odia" : "Hindi"}
-          </div>
-          {isHost && (
-            <div className="relative">
-              <button
-                onClick={(e) => { e.preventDefault(); e.stopPropagation(); setMenuOpen((p) => !p); }}
-                className="w-7 h-7 rounded-full bg-black/50 backdrop-blur-sm flex items-center justify-center hover:bg-black/70 transition-colors"
-              >
-                <MoreVertical size={13} className="text-white" />
-              </button>
-              <AnimatePresence>
-                {menuOpen && (
-                  <CreatorMenu mehfilId={m.id} archived={m.archived} onClose={() => setMenuOpen(false)} />
-                )}
-              </AnimatePresence>
-            </div>
-          )}
-        </div>
-
-        {/* Bottom info */}
-        <Link href={`/mehfil/${m.id}`} className="block absolute bottom-0 left-0 right-0 p-4">
-          <div className="text-[16px] font-['Playfair_Display'] text-white leading-tight mb-1.5">{m.title}</div>
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              {host && <img src={host.avatarUrl} alt="" className="w-5 h-5 rounded-full object-cover border border-white/30" />}
-              <span className="text-[11px] font-['Inter'] text-white/70">{host?.displayName ?? "Host"}</span>
-            </div>
-            {m.isLive && (
-              <div className="flex items-center gap-1 text-white/70">
-                <Users size={11} />
-                <span className="text-[11px] font-['Inter']">{m.listeners.toLocaleString()}</span>
-              </div>
-            )}
-          </div>
-        </Link>
+    <div className="flex flex-col items-center justify-center py-16 px-6 text-center">
+      <div
+        className="w-14 h-14 rounded-2xl flex items-center justify-center mb-4"
+        style={{ background: "rgba(255,255,255,0.05)" }}
+      >
+        <Radio size={24} style={{ color: FEED_MUTED }} />
       </div>
-
-      {/* Tags */}
-      {m.tags?.length > 0 && (
-        <div className="flex gap-1.5 mt-2 ml-1 flex-wrap">
-          {m.tags.slice(0, 3).map((tag: string) => (
-            <span key={tag} className="text-[10px] font-['Inter'] text-muted-foreground border border-border/50 rounded-full px-2 py-0.5">#{tag}</span>
-          ))}
-        </div>
+      <div className="font-['Playfair_Display'] text-[18px] mb-2">{title}</div>
+      <p className="text-[13px] font-['Inter'] leading-relaxed mb-6 max-w-[260px]" style={{ color: FEED_MUTED }}>
+        {body}
+      </p>
+      {(tab === "For You" || tab === "My Mehfils") && (
+        <Link
+          href="/mehfil/host/new"
+          className="inline-flex items-center gap-2 px-6 py-3 rounded-full text-[13px] font-['Inter'] font-medium active:scale-95 transition-transform"
+          style={{ background: FEED_GOLD, color: FEED_BG }}
+        >
+          Start Mehfil
+        </Link>
       )}
-    </motion.div>
+    </div>
   );
 }
 
-// ─── Page ─────────────────────────────────────────────────────────────────────
+function ForYouContent({
+  live,
+  upcoming,
+  trending,
+  category,
+}: {
+  live: Mehfil[];
+  upcoming: Mehfil[];
+  trending: Mehfil[];
+  category: MehfilCategory;
+}) {
+  const filteredLive = applyCategory(live, category);
+  const filteredUpcoming = applyCategory(upcoming, category);
+  const filteredTrending = applyCategory(trending, category);
+  const hasContent = filteredLive.length > 0 || filteredUpcoming.length > 0 || filteredTrending.length > 0;
+
+  if (!hasContent) return <EmptyState tab="For You" />;
+
+  return (
+    <>
+      {filteredLive.length > 0 && <HeroCarousel liveMehfils={filteredLive} />}
+
+      {filteredUpcoming.length > 0 && (
+        <section className="mb-6">
+          <SectionHeading>Upcoming Mehfils</SectionHeading>
+          <div className="flex gap-3 overflow-x-auto no-scrollbar pb-1 -mx-1 px-1">
+            {filteredUpcoming.map((m) => (
+              <UpcomingMehfilCard key={m.id} m={m} />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {filteredTrending.length > 0 && (
+        <section className="mb-6">
+          <SectionHeading>Trending Now</SectionHeading>
+          <div className="flex gap-2.5 overflow-x-auto no-scrollbar pb-1 -mx-1 px-1">
+            {filteredTrending.map((m) => (
+              <TrendingMehfilCard key={m.id} m={m} />
+            ))}
+          </div>
+        </section>
+      )}
+
+      <CreateMehfilBanner />
+    </>
+  );
+}
+
+function ExploreContent({ mehfils, category }: { mehfils: Mehfil[]; category: MehfilCategory }) {
+  const filtered = applyCategory(
+    mehfils.filter((m) => !m.archived),
+    category,
+  );
+
+  if (filtered.length === 0) return <EmptyState tab="Explore" />;
+
+  const live = filtered.filter((m) => m.isLive);
+  const rest = filtered.filter((m) => !m.isLive);
+
+  return (
+    <div className="space-y-5">
+      {live.length > 0 && (
+        <section>
+          <SectionHeading>Live now</SectionHeading>
+          <div className="flex gap-2.5 overflow-x-auto no-scrollbar pb-1 -mx-1 px-1">
+            {live.map((m) => (
+              <TrendingMehfilCard key={m.id} m={m} />
+            ))}
+          </div>
+        </section>
+      )}
+      {rest.length > 0 && (
+        <section>
+          <SectionHeading>All public Mehfils</SectionHeading>
+          <div className="space-y-2">
+            {rest.map((m) => (
+              <HostMehfilRow key={m.id} m={m} />
+            ))}
+          </div>
+        </section>
+      )}
+      <CreateMehfilBanner />
+    </div>
+  );
+}
+
+function MyMehfilsContent({ mehfils, category }: { mehfils: Mehfil[]; category: MehfilCategory }) {
+  const filtered = applyCategory(mehfils, category);
+  if (filtered.length === 0) return <EmptyState tab="My Mehfils" />;
+
+  return (
+    <div className="space-y-2">
+      {filtered.map((m) => (
+        <HostMehfilRow key={m.id} m={m} />
+      ))}
+      <div className="pt-4">
+        <CreateMehfilBanner />
+      </div>
+    </div>
+  );
+}
+
+function HistoryContent({ mehfils, category }: { mehfils: Mehfil[]; category: MehfilCategory }) {
+  const filtered = applyCategory(mehfils, category);
+  if (filtered.length === 0) return <EmptyState tab="History" />;
+
+  return (
+    <div className="space-y-2">
+      {filtered.map((m) => (
+        <HistoryMehfilRow key={m.id} m={m} />
+      ))}
+    </div>
+  );
+}
 
 export default function MehfilList() {
   useTitle("Mehfil");
   useMehfilRealtime();
-  const { data: mehfils = [] } = useMehfils();
-  const [tab, setTab] = useState<"all" | "live" | "upcoming">("all");
 
-  const live = mehfils.filter((m) => m.isLive);
-  const upcoming = mehfils.filter((m) => !m.isLive && !m.archived);
-  const displayed = tab === "all" ? mehfils.filter((m) => !m.archived) : tab === "live" ? live : upcoming;
+  const { data: mehfils = [] } = useMehfils();
+  const { data: user } = useCurrentUser();
+  const { data: hostMehfils = [] } = useMehfilsForHost(user?.id ?? "");
+  const { data: unreadCount = 0 } = useUnreadNotificationCount();
+
+  const [tab, setTab] = useState<MehfilTab>("For You");
+  const [category, setCategory] = useState<MehfilCategory>("All Mehfils");
+
+  const { live, upcoming, trending, history } = useMemo(() => {
+    const publicList = mehfils.filter((m) => !m.archived);
+    const liveList = publicList.filter((m) => m.isLive);
+    const upcomingList = publicList.filter(isMehfilUpcoming);
+    const trendingList = [...liveList].sort((a, b) => b.listeners - a.listeners);
+
+    const historyMap = new Map<string, Mehfil>();
+    for (const m of publicList) {
+      if (!m.isLive && (m.endedAt || isMehfilEnded(m))) historyMap.set(m.id, m);
+    }
+    for (const m of hostMehfils) {
+      if (!m.isLive && (m.endedAt || isMehfilEnded(m) || isMehfilDiscoveryExpired(m))) {
+        historyMap.set(m.id, m);
+      }
+    }
+    const historyList = [...historyMap.values()].sort(
+      (a, b) => new Date(b.endedAt ?? b.startsAt).getTime() - new Date(a.endedAt ?? a.startsAt).getTime(),
+    );
+
+    return {
+      live: liveList,
+      upcoming: upcomingList,
+      trending: trendingList.length > 0 ? trendingList : liveList,
+      history: historyList,
+    };
+  }, [mehfils, hostMehfils]);
+
+  const showCategoryChips = tab === "For You" || tab === "Explore";
 
   return (
-    <div className="min-h-[100dvh] w-full flex flex-col bg-background text-foreground">
-      {/* Header */}
-      <div className="px-5 py-4 flex justify-between items-center sticky top-0 z-20 bg-background/92 backdrop-blur-md border-b border-border/40">
-        <div>
-          <div className="flex items-center gap-2">
-            <Radio size={16} className="text-terracotta" />
-            <span className="text-[18px] font-['Playfair_Display'] text-foreground">Mehfil</span>
-          </div>
-          <div className="text-[10px] font-['Inter'] text-muted-foreground mt-0.5">Live salons &amp; gatherings</div>
-        </div>
-        <Link href="/mehfil/host/new">
-          <div className="flex items-center gap-1.5 bg-terracotta text-white text-[12px] font-['Inter'] font-medium rounded-full px-3.5 py-1.5 active:scale-95 transition-transform">
-            <Plus size={13} />
-            Host
-          </div>
-        </Link>
-      </div>
+    <div className="min-h-[100dvh] w-full flex flex-col relative" style={{ background: FEED_BG, color: FEED_TEXT }}>
+      {/* Ambient glow */}
+      <div
+        className="fixed top-[-40px] right-[-60px] w-[220px] h-[220px] rounded-full pointer-events-none"
+        style={{ background: "radial-gradient(circle, rgba(155,89,182,0.18) 0%, transparent 70%)", filter: "blur(48px)" }}
+      />
+      <div
+        className="fixed top-[200px] left-[-80px] w-[200px] h-[200px] rounded-full pointer-events-none"
+        style={{ background: "radial-gradient(circle, rgba(201,168,76,0.12) 0%, transparent 70%)", filter: "blur(52px)" }}
+      />
 
-      {/* Tabs — underline style matching feed */}
-      <div className="relative border-b border-border/40">
-        <div className="flex px-4">
-          {([
-            ["all", "All"],
-            ["live", live.length ? `Live · ${live.length}` : "Live"],
-            ["upcoming", "Upcoming"],
-          ] as const).map(([id, label]) => (
-            <button key={id} onClick={() => setTab(id)}
-              className={`relative shrink-0 px-4 py-3 text-[12px] font-['Inter'] transition-colors whitespace-nowrap ${
-                tab === id ? "text-foreground font-medium" : "text-muted-foreground hover:text-foreground/80"
-              }`}
+      {/* Header — matches home pattern */}
+      <header
+        className="px-4 py-3 flex justify-between items-center sticky top-0 z-20"
+        style={{ background: "rgba(10,8,6,0.92)", backdropFilter: "blur(16px)", borderBottom: `1px solid ${FEED_BORDER}` }}
+      >
+        <Link href="/" className="active:opacity-80 transition-opacity">
+          <MoKathaWordmark />
+        </Link>
+        <div className="flex items-center gap-0.5">
+          <Link
+            href="/search"
+            className="w-9 h-9 rounded-full flex items-center justify-center transition-colors"
+            style={{ color: FEED_MUTED }}
+            aria-label="Search"
+          >
+            <Search strokeWidth={1.75} size={18} />
+          </Link>
+          <Link
+            href="/notifications"
+            className="w-9 h-9 rounded-full flex items-center justify-center relative transition-colors"
+            aria-label="Notifications"
+          >
+            <Bell strokeWidth={1.75} size={18} style={{ color: unreadCount > 0 ? FEED_GOLD : FEED_MUTED }} />
+            {unreadCount > 0 && (
+              <span
+                className="absolute top-0.5 right-0.5 min-w-[15px] h-[15px] px-[3px] rounded-full text-[8px] font-bold font-['Inter'] flex items-center justify-center leading-none"
+                style={{ background: FEED_GOLD, color: FEED_BG }}
+              >
+                {unreadCount > 99 ? "99+" : unreadCount}
+              </span>
+            )}
+          </Link>
+          <Link href="/me" className="ml-1" aria-label="Profile">
+            <div
+              className="p-[2px] rounded-full"
+              style={{ background: `linear-gradient(135deg, ${FEED_GOLD}, #E8B14A, ${FEED_PURPLE})` }}
             >
-              {label}
+              <img
+                src={user?.avatarUrl || "https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=80&h=80&fit=crop&crop=faces"}
+                alt=""
+                className="w-8 h-8 rounded-full object-cover border-2"
+                style={{ borderColor: FEED_BG }}
+              />
+            </div>
+          </Link>
+        </div>
+      </header>
+
+      {/* Tabs */}
+      <div className="relative border-b" style={{ borderColor: FEED_BORDER }}>
+        <div className="flex px-2 overflow-x-auto no-scrollbar">
+          {MEHFIL_TABS.map((id) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => setTab(id)}
+              className={`relative shrink-0 px-3.5 py-3 text-[12px] font-['Inter'] transition-colors whitespace-nowrap ${
+                tab === id ? "font-medium" : ""
+              }`}
+              style={{ color: tab === id ? FEED_TEXT : FEED_MUTED }}
+            >
+              {id}
               {tab === id && (
-                <motion.div layoutId="mehfil-tab-line" className="absolute bottom-0 left-2 right-2 h-[1.5px] rounded-full bg-terracotta"
-                  transition={{ type: "spring", stiffness: 400, damping: 30 }} />
+                <motion.div
+                  layoutId="mehfil-tab-line"
+                  className="absolute bottom-0 left-2 right-2 h-[2px] rounded-full"
+                  style={{ background: FEED_GOLD }}
+                  transition={{ type: "spring", stiffness: 400, damping: 30 }}
+                />
               )}
             </button>
           ))}
         </div>
       </div>
 
-      {/* Live banner */}
-      {live.length > 0 && tab !== "upcoming" && (
-        <div className="mx-5 mt-4 px-4 py-3 rounded-xl flex items-center gap-3"
-          style={{ background: "linear-gradient(135deg, hsl(var(--terracotta)/0.12), hsl(var(--ochre)/0.06))", border: "1px solid hsl(var(--terracotta)/0.2)" }}>
-          <Mic size={16} className="text-terracotta shrink-0" />
-          <div>
-            <div className="text-[13px] font-['Inter'] font-medium text-foreground">{live.length} session{live.length > 1 ? "s" : ""} live right now</div>
-            <div className="text-[11px] font-['Inter'] text-muted-foreground">{mehfils.reduce((s, m) => s + (m.isLive ? m.listeners : 0), 0).toLocaleString()} listening in total</div>
-          </div>
+      {/* Category chips */}
+      {showCategoryChips && (
+        <div className="px-4 py-2.5 flex items-center gap-2 overflow-x-auto no-scrollbar">
+          {MEHFIL_CATEGORIES.map((cat) => {
+            const active = category === cat;
+            return (
+              <button
+                key={cat}
+                type="button"
+                onClick={() => setCategory(cat)}
+                className="shrink-0 px-3.5 py-1.5 rounded-full text-[11px] font-['Inter'] font-medium tracking-[0.02em] transition-colors"
+                style={
+                  active
+                    ? { background: FEED_PURPLE, color: "#fff" }
+                    : { background: "rgba(255,255,255,0.05)", color: FEED_MUTED, border: `1px solid ${FEED_BORDER}` }
+                }
+              >
+                {cat}
+              </button>
+            );
+          })}
         </div>
       )}
 
-      {/* Cards */}
-      <div className="flex-1 px-5 pt-4 pb-28 space-y-5">
-        {displayed.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-20 px-8 text-center">
-            <div className="w-14 h-14 rounded-2xl bg-muted flex items-center justify-center mb-4">
-              <Radio size={24} className="text-muted-foreground" />
-            </div>
-            <div className="font-['Playfair_Display'] text-[18px] mb-2">No gatherings scheduled</div>
-            <div className="text-[13px] text-muted-foreground leading-relaxed mb-6">
-              When someone opens a Mehfil, a circle forms.<br />Host one — let the room hear you.
-            </div>
-            <Link href="/mehfil/host/new"
-              className="inline-flex items-center gap-2 px-6 py-3 rounded-full text-[13px] font-['Inter'] font-medium bg-foreground text-background">
-              <Mic size={14} /> Host a Mehfil
-            </Link>
-          </div>
-        ) : (
-          displayed.map((m, i) => <MehfilCard key={m.id} m={m} index={i} />)
+      {/* Tab content */}
+      <div className="flex-1 px-4 pt-3 pb-28 relative z-10">
+        {tab === "For You" && (
+          <ForYouContent live={live} upcoming={upcoming} trending={trending} category={category} />
         )}
+        {tab === "Explore" && <ExploreContent mehfils={mehfils} category={category} />}
+        {tab === "My Mehfils" && <MyMehfilsContent mehfils={hostMehfils} category={category} />}
+        {tab === "History" && <HistoryContent mehfils={history} category={category} />}
       </div>
     </div>
   );
