@@ -23,6 +23,7 @@ export type User = {
   following: number;
   isAdmin: boolean;
   suspended?: boolean;
+  createdAt?: string;
 };
 
 export type PostKind = "voice" | "text" | "story" | "reel";
@@ -218,6 +219,7 @@ function mapUser(u: any): User {
     following: u.following ?? 0,
     isAdmin: u.is_admin ?? false,
     suspended: u.suspended ?? false,
+    createdAt: u.created_at ?? undefined,
   };
 }
 

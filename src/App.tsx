@@ -43,6 +43,9 @@ import SettingsAccount from "@/pages/settings/account";
 import SettingsPrivacy from "@/pages/settings/privacy";
 import SettingsNotifs from "@/pages/settings/notifications";
 import SettingsAbout from "@/pages/settings/about";
+import SettingsBlocked from "@/pages/settings/blocked";
+import SettingsMehfilPrefs from "@/pages/settings/mehfil-preferences";
+import SettingsHelp from "@/pages/settings/help";
 import Messages from "@/pages/messages";
 import Rewards from "@/pages/rewards";
 import CreatorPlan from "@/pages/creator-plan";
@@ -69,6 +72,7 @@ import MobileShell from "@/components/layout/MobileShell";
 import { AudioProvider } from "@/lib/audioContext";
 import { MehfilMediaProvider } from "@/features/mehfil/MehfilMediaContext";
 import PWAInstallPrompt from "@/components/PWAInstallPrompt";
+import { initUserPreferences } from "@/lib/userPreferences";
 import Landing from "@/pages/landing";
 
 const queryClient = new QueryClient({
@@ -115,6 +119,9 @@ const SettingsAccountRoute = withMobile(SettingsAccount);
 const SettingsPrivacyRoute = withMobile(SettingsPrivacy);
 const SettingsNotifsRoute  = withMobile(SettingsNotifs);
 const SettingsAboutRoute   = withMobile(SettingsAbout);
+const SettingsBlockedRoute = withMobile(SettingsBlocked);
+const SettingsMehfilPrefsRoute = withMobile(SettingsMehfilPrefs);
+const SettingsHelpRoute    = withMobile(SettingsHelp);
 const NotFoundRoute        = withMobile(NotFound);
 
 // Auth gate for the home route — renders Landing (no shell) for guests,
@@ -143,6 +150,7 @@ function HomeGate() {
 function Router() {
   const [location] = useLocation();
   useEffect(() => { window.scrollTo(0, 0); }, [location]);
+  useEffect(() => { initUserPreferences(); }, []);
   const isAdmin = location.startsWith("/admin");
   const isFullScreen =
     location === "/splash" ||
@@ -238,6 +246,9 @@ function Router() {
             <Route path="/settings/privacy" component={SettingsPrivacyRoute} />
             <Route path="/settings/notifications" component={SettingsNotifsRoute} />
             <Route path="/settings/about" component={SettingsAboutRoute} />
+            <Route path="/settings/blocked" component={SettingsBlockedRoute} />
+            <Route path="/settings/mehfil-preferences" component={SettingsMehfilPrefsRoute} />
+            <Route path="/settings/help" component={SettingsHelpRoute} />
 
             <Route component={NotFoundRoute} />
           </Switch>

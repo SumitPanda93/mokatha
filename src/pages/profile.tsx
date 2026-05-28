@@ -1,318 +1,65 @@
 import { useState } from "react";
-import { Link, useLocation } from "wouter";
-import { Settings, Heart, MessageCircle, Play, Mic, Share2, Radio, Star, Zap, BadgeCheck, Eye, EyeOff } from "lucide-react";
+import { useLocation } from "wouter";
+import { Settings } from "lucide-react";
 import { useTitle } from "@/hooks/useTitle";
-import {
-  useCurrentUser, usePostsByAuthor, useWalletBalance, useSavedPosts,
-  getCurrentUserId, Post, useAuthorPlan, useSubscribersOf, useInkReward,
-  useFollowers, useFollowing, usePostsRealtime,
-} from "@/lib/store";
+import { useCurrentUser, usePostsRealtime } from "@/lib/store";
 import { useAuthState } from "@/lib/auth";
-import { ProfileShareSheet } from "@/components/ProfileShareSheet";
-import { ProfileGatheringsSection } from "@/components/ProfileGatheringsSection";
-
-const BADGE_LABELS: Record<string, string> = {
-  "supporter": "💛 Supporter",
-  "top-reader": "📖 Top Reader",
-  "soul-listener": "🎧 Soul Listener",
-};
+import { ProfileView } from "@/components/profile/ProfileView";
+import { ProfileShell, PROFILE_MUTED } from "@/components/profile/profile-ui";
 
 export default function Profile() {
   useTitle("Profile");
   const [, setLocation] = useLocation();
   const { ready } = useAuthState();
   const { data: user } = useCurrentUser();
-  const meId = getCurrentUserId() ?? "u1";
-  const { data: posts = [] } = usePostsByAuthor(meId);
-  const { data: balance = 0 } = useWalletBalance(meId);
-  const { data: saved = [] } = useSavedPosts(meId);
-  const { data: plan } = useAuthorPlan(meId);
-  const { data: subscribers = [] } = useSubscribersOf(meId);
-  const { data: ink } = useInkReward(meId);
-  const { data: followersData = [] } = useFollowers(meId);
-  const { data: followingData = [] } = useFollowing(meId);
-  const [tab, setTab] = useState<"posts" | "saved">("posts");
   const [viewAs, setViewAs] = useState(false);
-  const [shareOpen, setShareOpen] = useState(false);
   usePostsRealtime();
 
-  const shareUrl = typeof window !== "undefined" && user?.handle ? `${window.location.origin}/u/${user.handle}` : "";
-
-  // Still resolving auth — show spinner to avoid flash
   if (!ready) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="w-8 h-8 rounded-full border-2 border-terracotta border-t-transparent animate-spin" />
-      </div>
+      <ProfileShell>
+        <div className="min-h-[60vh] flex items-center justify-center">
+          <div className="w-8 h-8 rounded-full border-2 border-t-transparent animate-spin" style={{ borderColor: "#C9A84C", borderTopColor: "transparent" }} />
+        </div>
+      </ProfileShell>
     );
   }
 
   if (!user) {
     return (
-      <div className="min-h-screen flex flex-col bg-background">
-        {/* Keep the header consistent with the rest of the app */}
-        <div className="px-5 py-4 flex items-center justify-between border-b border-border">
+      <ProfileShell>
+        <div className="px-5 py-4 flex items-center justify-between">
           <div className="font-['Playfair_Display'] text-[18px]">Profile</div>
           <div className="w-9 h-9" />
         </div>
-        <div className="flex-1 flex flex-col items-center justify-center gap-5 px-8 text-center pb-24">
-          <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center">
-            <Settings size={26} className="text-muted-foreground" />
+        <div className="flex-1 flex flex-col items-center justify-center gap-5 px-8 text-center pb-24 min-h-[60vh]">
+          <div className="w-16 h-16 rounded-full flex items-center justify-center" style={{ background: "rgba(255,255,255,0.06)" }}>
+            <Settings size={26} style={{ color: PROFILE_MUTED }} />
           </div>
           <div>
-            <div className="font-['Playfair_Display'] text-[24px] text-foreground mb-2">Your profile awaits</div>
-            <div className="text-[13px] text-muted-foreground leading-relaxed">Sign in to manage your stories,<br />track earnings and Ink Points.</div>
+            <div className="font-['Playfair_Display'] text-[24px] mb-2">Your profile awaits</div>
+            <div className="text-[13px] leading-relaxed" style={{ color: PROFILE_MUTED }}>
+              Sign in to manage your stories, track earnings and Ink Points.
+            </div>
           </div>
           <button
             onClick={() => setLocation("/auth/login")}
-            className="px-10 py-3.5 rounded-full bg-foreground text-background text-[14px] font-['Inter'] font-medium"
+            className="px-10 py-3.5 rounded-full text-[14px] font-['Inter'] font-medium"
+            style={{ background: "linear-gradient(90deg, #C9A84C, #E8B14A)", color: "#0A0806" }}
           >
             Sign in
           </button>
         </div>
-      </div>
+      </ProfileShell>
     );
   }
 
-  const displayed = tab === "saved" ? saved : posts;
-  const followersCount = followersData.length;
-  const followingCount = followingData.length;
-
   return (
-    <div className="min-h-screen w-full bg-background flex flex-col">
-      {/* Header */}
-      <div className="px-5 py-3 flex justify-between items-center sticky top-0 bg-background/90 backdrop-blur-md z-20">
-        <div className="font-['Playfair_Display'] text-[18px]">
-          {viewAs ? "Visitor view" : "Profile"}
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setViewAs((v) => !v)}
-            className={`w-9 h-9 rounded-full border flex items-center justify-center transition-colors ${viewAs ? "border-terracotta bg-terracotta/10 text-terracotta" : "border-border hover:bg-black/5"}`}
-            title={viewAs ? "Exit visitor view" : "Preview as visitor"}
-          >
-            {viewAs ? <EyeOff size={15} /> : <Eye size={15} />}
-          </button>
-          {!viewAs && (
-            <Link href="/settings" className="w-9 h-9 rounded-full border border-border flex items-center justify-center hover:bg-black/5">
-              <Settings size={16} strokeWidth={1.5} />
-            </Link>
-          )}
-        </div>
-      </div>
-
-      {/* View-as banner */}
-      {viewAs && (
-        <div className="mx-5 mb-1 px-4 py-2.5 rounded-2xl bg-terracotta/8 border border-terracotta/20 flex items-center gap-2">
-          <Eye size={13} className="text-terracotta shrink-0" />
-          <span className="text-[12px] text-terracotta font-['Inter']">Viewing as a visitor — this is how others see your profile</span>
-        </div>
-      )}
-
-      {/* ── Hero ── */}
-      <div className="px-6 pt-8 pb-7 relative">
-        {/* Ambient glow */}
-        <div className="absolute top-0 right-4 w-[120px] h-[120px] rounded-full bg-ochre/15 blur-3xl pointer-events-none" />
-
-        {/* Avatar + name row */}
-        <div className="flex items-start gap-5 mb-7 relative">
-          <div className="relative shrink-0">
-            <div className="absolute -inset-[3px] rounded-full opacity-70 blur-[3px]"
-              style={{ background: "linear-gradient(135deg, hsl(var(--terracotta)), hsl(var(--ochre)), hsl(var(--plum)))" }} />
-            <img src={user.avatarUrl} alt={user.displayName}
-              className="relative w-[76px] h-[76px] rounded-full object-cover border-2 border-background" />
-            {user.verified && (
-              <div className="absolute -bottom-0.5 -right-0.5 w-[18px] h-[18px] rounded-full bg-sage border-2 border-background flex items-center justify-center">
-                <span className="text-white text-[8px] font-bold leading-none">✓</span>
-              </div>
-            )}
-          </div>
-          <div className="flex-1 min-w-0">
-            <div className="font-['Playfair_Display'] text-[24px] text-foreground leading-tight truncate">
-              {user.displayName}
-            </div>
-            <div className="text-[10px] font-['Inter'] uppercase tracking-[0.18em] text-muted-foreground/80 mt-1">Creator</div>
-            <div className="text-[11px] text-muted-foreground mt-1">@{user.handle}</div>
-            {user.location && (
-              <div className="text-[10px] text-muted-foreground/70 mt-0.5 uppercase tracking-[0.1em]">{user.location}</div>
-            )}
-          </div>
-        </div>
-
-        {/* Ink badges */}
-        {ink && ink.badges.length > 0 && (
-          <div className="flex gap-2 mb-5 flex-wrap">
-            {ink.badges.map((b) => (
-              <span key={b} className="text-[10px] px-2.5 py-1 rounded-full bg-ochre/10 text-ochre border border-ochre/20">
-                {BADGE_LABELS[b]}
-              </span>
-            ))}
-          </div>
-        )}
-
-        {/* Bio */}
-        {user.bio && (
-          <div className="text-[14px] font-['Playfair_Display'] italic text-foreground/80 leading-[1.6] mb-5 whitespace-pre-line">
-            {user.bio}
-          </div>
-        )}
-
-        {/* ── Primary stats — grouped for calmer hierarchy ── */}
-        <div className="rounded-2xl border border-border/40 bg-card/45 backdrop-blur-[2px] px-2 py-4 mb-6">
-          <div className="grid grid-cols-3 gap-0 divide-x divide-border/30">
-          <Link href={`/u/${user.handle}/followers`}
-            className="text-center py-2.5 rounded-xl hover:bg-card transition-colors">
-            <div className="text-[20px] font-['Playfair_Display'] leading-none">{followersCount.toLocaleString()}</div>
-            <div className="text-[9px] uppercase tracking-[0.14em] text-muted-foreground mt-0.5">followers</div>
-          </Link>
-          <Link href={`/u/${user.handle}/following`}
-            className="text-center py-2.5 rounded-xl hover:bg-card transition-colors">
-            <div className="text-[20px] font-['Playfair_Display'] leading-none">{followingCount.toLocaleString()}</div>
-            <div className="text-[9px] uppercase tracking-[0.14em] text-muted-foreground mt-0.5">following</div>
-          </Link>
-          <div className="text-center py-2.5">
-            <div className="text-[20px] font-['Playfair_Display'] leading-none">{posts.length}</div>
-            <div className="text-[9px] uppercase tracking-[0.14em] text-muted-foreground mt-0.5">works</div>
-          </div>
-          </div>
-        </div>
-
-        {/* ── Secondary row: Subscribers + Wallet — hidden for visitor view ── */}
-        {!viewAs && (
-          <div className="flex gap-2 mb-5 mt-1">
-            <div className="flex-1 flex items-center gap-2.5 px-4 py-2.5 rounded-xl bg-card border border-border/50">
-              <Star size={13} className="text-plum shrink-0" />
-              <div>
-                <div className="text-[15px] font-['Playfair_Display'] leading-none">{subscribers.length}</div>
-                <div className="text-[9px] uppercase tracking-[0.12em] text-muted-foreground mt-0.5">subscribers</div>
-              </div>
-            </div>
-            <Link href="/wallet"
-              className="flex-1 flex items-center gap-2.5 px-4 py-2.5 rounded-xl bg-card border border-border/50 hover:border-sage/40 transition-colors">
-              <span className="text-sage text-[14px] font-['Inter'] shrink-0">₹</span>
-              <div>
-                <div className="text-[15px] font-['Playfair_Display'] leading-none text-sage">
-                  {balance >= 1000 ? `${(balance / 1000).toFixed(1)}k` : balance}
-                </div>
-                <div className="text-[9px] uppercase tracking-[0.12em] text-muted-foreground mt-0.5">wallet</div>
-              </div>
-            </Link>
-          </div>
-        )}
-
-        {/* Quick action cards — hidden in visitor view */}
-        {!viewAs && (
-          <div className="grid grid-cols-3 gap-2 mb-5">
-            <Link href="/rewards"
-              className="flex flex-col items-center gap-1.5 py-3.5 rounded-xl border border-border/40 bg-card/80 hover:border-ochre/45 hover:bg-ochre/[0.04] transition-colors">
-              <Zap size={15} className="text-ochre" />
-              <div className="text-[13px] font-['Playfair_Display']">{ink?.points ?? 0}</div>
-              <div className="text-[9px] text-muted-foreground uppercase tracking-wider">Ink pts</div>
-            </Link>
-            <Link href="/creator-plan"
-              className="flex flex-col items-center gap-1.5 py-3.5 rounded-xl border border-border/40 bg-card/80 hover:border-plum/45 hover:bg-plum/[0.04] transition-colors">
-              <Star size={15} className="text-plum" />
-              <div className="text-[13px] font-['Playfair_Display']">{plan?.enabled ? `₹${plan.priceMonthly}` : "—"}</div>
-              <div className="text-[9px] text-muted-foreground uppercase tracking-wider">My plan</div>
-            </Link>
-            <Link href="/settings/account"
-              className="flex flex-col items-center gap-1.5 py-3.5 rounded-xl border border-border/40 bg-card/80 hover:border-sage/45 hover:bg-sage/[0.04] transition-colors">
-              <BadgeCheck size={15} className="text-sage" />
-              <div className="text-[13px] font-['Playfair_Display']">Edit</div>
-              <div className="text-[9px] text-muted-foreground uppercase tracking-wider">Profile</div>
-            </Link>
-          </div>
-        )}
-
-        {/* Action buttons — host Mehfil hidden in visitor view */}
-        <div className="flex gap-2">
-          {!viewAs && (
-            <Link href="/mehfil/host/new" className="flex-1">
-              <button className="w-full text-[13px] font-['Inter'] text-background bg-foreground rounded-full py-2.5 flex items-center justify-center gap-2 active:scale-[0.98] transition-transform">
-                <Radio size={14} /> Host Mehfil
-              </button>
-            </Link>
-          )}
-          <button
-            type="button"
-            onClick={() => setShareOpen(true)}
-            className="w-10 h-10 rounded-full border border-border flex items-center justify-center hover:bg-muted/40 transition-colors"
-            aria-label="Share profile"
-          >
-            <Share2 size={14} />
-          </button>
-        </div>
-      </div>
-
-      {!viewAs && <ProfileGatheringsSection hostId={meId} />}
-
-      {/* Tabs — only show "saved" when not in visitor view */}
-      <div className="border-t border-border px-6 flex gap-6">
-        {(viewAs ? (["posts"] as const) : (["posts", "saved"] as const)).map((t) => (
-          <button key={t} onClick={() => setTab(t)} className={`py-3 text-[12px] uppercase tracking-[0.15em] border-b-2 transition-colors ${tab === t ? "border-terracotta text-foreground" : "border-transparent text-muted-foreground"}`}>{t}</button>
-        ))}
-      </div>
-
-      {/* Posts grid */}
-      <div className="px-5 mt-4 grid grid-cols-2 gap-4 pb-14">
-        {displayed.map((p) => <ProfilePostCard key={p.id} post={p} />)}
-        {displayed.length === 0 && (
-          <div className="col-span-2 py-16 text-center flex flex-col items-center gap-3 px-4">
-            <div className="w-14 h-14 rounded-3xl bg-gradient-to-br from-muted to-muted/50 border border-border/55 flex items-center justify-center shadow-sm">
-              <Heart size={22} className="text-muted-foreground/65" />
-            </div>
-            <div className="font-['Playfair_Display'] text-[17px] italic text-muted-foreground leading-snug">
-              {tab === "saved" ? "Your shelf is waiting." : "No works published yet."}
-            </div>
-            <div className="text-[12px] text-muted-foreground/65 font-['Inter'] leading-relaxed max-w-[280px]">
-              {tab === "saved"
-                ? "Save pieces that move you — they rest here like folded letters."
-                : "Share a voice note or a line of poetry when the moment feels right."}
-            </div>
-          </div>
-        )}
-      </div>
-
-      <ProfileShareSheet
-        open={shareOpen}
-        onClose={() => setShareOpen(false)}
-        profileUrl={shareUrl}
-        displayName={user.displayName}
-        handle={user.handle}
-        avatarUrl={user.avatarUrl}
-      />
-    </div>
-  );
-}
-
-function ProfilePostCard({ post }: { post: Post }) {
-  const isAudio = post.kind === "voice" || post.kind === "reel";
-  const KIND_COLOR: Record<string, string> = {
-    voice: "bg-ochre", text: "bg-sage", story: "bg-violet", reel: "bg-plum",
-  };
-  return (
-    <Link href={`/post/${post.id}`} className="block rounded-2xl overflow-hidden bg-card border border-border/55 shadow-md hover:shadow-xl hover:border-terracotta/35 transition-all duration-300 active:scale-[0.992]">
-      <div className="relative aspect-[4/5] bg-muted">
-        {post.coverUrl
-          ? <img src={post.coverUrl} alt="" className="w-full h-full object-cover" decoding="async" loading="lazy" />
-          : <div className="w-full h-full flex items-center justify-center p-3 text-center font-['Playfair_Display'] text-[15px] text-foreground/80" style={{ background: "linear-gradient(135deg,hsl(var(--ochre)/0.15),hsl(var(--plum)/0.15))" }}>{post.title}</div>
-        }
-        <div className="absolute top-2.5 left-2.5">
-          <span className={`text-[8px] text-white px-2 py-0.5 rounded-full shadow-sm ${KIND_COLOR[post.kind]}`}>{post.kind.toUpperCase()}</span>
-        </div>
-        {isAudio && (
-          <div className="absolute bottom-2 left-2 w-7 h-7 rounded-full bg-white/90 flex items-center justify-center shadow">
-            {post.kind === "voice" ? <Mic size={11} className="text-terracotta" /> : <Play size={10} className="text-plum ml-0.5" />}
-          </div>
-        )}
-      </div>
-      <div className="px-3 py-2.5 border-t border-border/30 bg-card/80 backdrop-blur-[2px]">
-        <div className="text-[12px] font-['Playfair_Display'] line-clamp-1">{post.title}</div>
-        <div className="flex gap-3 text-[10px] text-muted-foreground mt-1">
-          <span className="flex items-center gap-1"><Heart size={9} />{post.likes.toLocaleString()}</span>
-          <span className="flex items-center gap-1"><MessageCircle size={9} />{post.comments}</span>
-        </div>
-      </div>
-    </Link>
+    <ProfileView
+      user={user}
+      isOwnProfile
+      viewAsVisitor={viewAs}
+      onToggleViewAs={() => setViewAs((v) => !v)}
+    />
   );
 }

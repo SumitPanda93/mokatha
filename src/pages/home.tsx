@@ -1,394 +1,19 @@
 import { useState } from "react";
 import { Link } from "wouter";
-import { Search, Heart, MessageCircle, Bookmark, Play, Mic, Lock, Zap, Bell, Layers } from "lucide-react";
+import { Search, Bell, SlidersHorizontal } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useTitle } from "@/hooks/useTitle";
 import {
-  useFeed, useCurrentUser, useMehfils, useLike, useTip, useUser, useSavePost,
-  getCurrentUserId, Post, useIsPostUnlocked,
-  usePostsRealtime, useMehfilRealtime, useUnreadCount, useAccountSyncRealtime,
+  useFeed, useCurrentUser, useMehfils, useTip, useUser,
+  Post, usePostsRealtime, useMehfilRealtime, useUnreadCount, useAccountSyncRealtime,
 } from "@/lib/store";
 import { SHEET_SPRING } from "@/lib/motionTokens";
-
-// ─── Constants ────────────────────────────────────────────────────────────────
-
-const KIND_ACCENT: Record<string, string> = {
-  voice: "hsl(var(--ochre))",
-  text:  "hsl(var(--sage))",
-  story: "hsl(var(--violet))",
-  reel:  "hsl(var(--plum))",
-};
-const KIND_LABEL: Record<string, string> = {
-  voice: "Voice", text: "Text", story: "Story", reel: "Reel",
-};
-
-const FILTERS = ["For you", "Voice", "Text", "Story", "Reel"] as const;
-type Filter = typeof FILTERS[number];
-
-/** Unified feed card shell — consistent rhythm across post kinds */
-const FEED_CARD =
-  "rounded-2xl overflow-hidden bg-card border border-border/60 shadow-md shadow-black/[0.06] ring-1 ring-black/[0.035]";
-const FEED_FOOTER =
-  "px-4 py-3 flex items-center gap-2 border-t border-border/45 bg-card/98 backdrop-blur-[2px]";
-
-function greeting() {
-  const h = new Date().getHours();
-  if (h < 5) return "Late night"; if (h < 12) return "Good morning";
-  if (h < 17) return "Good afternoon"; if (h < 21) return "Good evening";
-  return "Late evening";
-}
-
-// ─── Access badge ─────────────────────────────────────────────────────────────
-
-function AccessBadge({ post }: { post: Post }) {
-  const me = getCurrentUserId() ?? "";
-  const { data: unlocked = post.accessType === "free" } = useIsPostUnlocked(me, post.id);
-  if (!post.accessType || post.accessType === "free") return null;
-  if (post.accessType === "tip") return (
-    <span className={`text-[9px] font-['Inter'] tracking-[0.12em] uppercase px-2 py-0.5 rounded-full font-semibold flex items-center gap-1 ${unlocked ? "bg-sage/20 text-sage" : "bg-ochre/90 text-white"}`}>
-      {unlocked ? "Unlocked" : <><Lock size={8} /> Tip ₹{post.minTip}</>}
-    </span>
-  );
-  return (
-    <span className={`text-[9px] font-['Inter'] tracking-[0.12em] uppercase px-2 py-0.5 rounded-full font-semibold flex items-center gap-1 ${unlocked ? "bg-sage/20 text-sage" : "bg-plum/90 text-white"}`}>
-      {unlocked ? "Access ✓" : <><Lock size={8} /> Premium</>}
-    </span>
-  );
-}
-
-// ─── Voice card ───────────────────────────────────────────────────────────────
-
-function VoiceCard({ post, onTip }: { post: Post; onTip: () => void }) {
-  const { data: author } = useUser(post.authorId);
-  const like = useLike(post.id);
-  const save = useSavePost();
-  const saved = post.saved ?? false;
-  const dur = post.durationSec
-    ? `${Math.floor(post.durationSec / 60)}:${String(post.durationSec % 60).padStart(2, "0")}`
-    : null;
-
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ type: "spring", damping: 24, stiffness: 200 }}
-      className={`${FEED_CARD} transition-[box-shadow,border-color] duration-300 hover:shadow-lg hover:border-border/80`}
-    >
-      {/* Hero area */}
-      <Link href={`/post/${post.id}`} className="relative block h-[192px] overflow-hidden">
-        {post.coverUrl
-          ? <img src={post.coverUrl} alt="" className="absolute inset-0 w-full h-full object-cover" decoding="async" loading="lazy" />
-          : <div className="absolute inset-0" style={{ background: "linear-gradient(135deg, #1C0F06 0%, #2E1A0C 40%, #1A0D18 100%)" }} />
-        }
-        {/* Overlay */}
-        <div className="absolute inset-0" style={{ background: post.coverUrl ? "linear-gradient(to top, rgba(0,0,0,0.88) 0%, rgba(0,0,0,0.35) 60%, rgba(0,0,0,0.18) 100%)" : "rgba(0,0,0,0.15)" }} />
-
-        {/* Badges top row */}
-        <div className="absolute top-3 left-3 right-3 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span className="text-[9px] font-['Inter'] tracking-[0.2em] uppercase px-2.5 py-1 rounded-full font-semibold bg-ochre/90 text-white backdrop-blur-sm">
-              Voice
-            </span>
-            {post.tags?.includes("mehfil-replay") && (
-              <span className="text-[8px] font-['Inter'] tracking-[0.18em] uppercase px-2 py-0.5 rounded-full font-semibold backdrop-blur-sm"
-                style={{ background: "rgba(107,232,158,0.35)", color: "#E8FFE8", border: "1px solid rgba(107,232,158,0.45)" }}>
-                Replay
-              </span>
-            )}
-            <AccessBadge post={post} />
-          </div>
-          {dur && (
-            <span className="text-[10px] font-['Inter'] font-medium bg-black/50 text-white/90 backdrop-blur-sm px-2 py-0.5 rounded-full">{dur}</span>
-          )}
-        </div>
-
-        {/* Waveform + play CTA */}
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-4">
-          <motion.div
-            whileTap={{ scale: 0.92 }}
-            className="w-[56px] h-[56px] rounded-full flex items-center justify-center shadow-2xl"
-            style={{ background: "rgba(255,255,255,0.95)", boxShadow: "0 8px 24px rgba(0,0,0,0.4)" }}
-          >
-            <Play size={20} className="text-terracotta ml-0.5" fill="currentColor" />
-          </motion.div>
-          {/* Equalizer bars */}
-          <div className="flex items-end gap-[3px] h-5">
-            {[0.5, 0.8, 0.4, 1, 0.6, 0.9, 0.5, 0.7, 0.4, 0.8].map((_, i) => (
-              <div key={i} className="w-[2.5px] rounded-full bg-white/50" style={{ animation: `feed-bar ${0.7 + (i % 4) * 0.15}s ease-in-out infinite ${i * 0.07}s` }} />
-            ))}
-          </div>
-        </div>
-
-        {/* Author + title bottom overlay */}
-        <div className="absolute bottom-0 left-0 right-0 px-4 pb-4">
-          <div className="text-[17px] font-['Playfair_Display'] text-white leading-snug mb-1.5 line-clamp-2">{post.title}</div>
-          <div className="flex items-center gap-2">
-            <img src={author?.avatarUrl} alt="" className="w-5 h-5 rounded-full object-cover border border-white/30" />
-            <span className="text-[11px] font-['Inter'] text-white/75">{author?.displayName}</span>
-          </div>
-        </div>
-      </Link>
-
-      {/* Action row */}
-      <div className={FEED_FOOTER}>
-        <motion.button whileTap={{ scale: 0.85 }} onClick={() => like.mutate()}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[12px] font-['Inter'] transition-colors ${post.liked ? "bg-terracotta text-white" : "text-muted-foreground hover:text-terracotta"}`}>
-          <Heart size={13} fill={post.liked ? "currentColor" : "none"} />{post.likes}
-        </motion.button>
-        <Link href={`/post/${post.id}`} className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[12px] font-['Inter'] text-muted-foreground hover:text-foreground transition-colors">
-          <MessageCircle size={13} />{post.comments}
-        </Link>
-        <div className="flex-1" />
-        <button onClick={onTip} className="text-[11px] font-['Inter'] font-medium px-3 py-1.5 rounded-full border border-ochre/50 text-ochre hover:bg-ochre hover:text-white transition-colors">Tip ₹</button>
-        <button onClick={() => save.mutate({ postId: post.id, on: !saved })}
-          className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors ${saved ? "text-violet" : "text-muted-foreground hover:text-violet"}`}>
-          <Bookmark size={14} fill={saved ? "currentColor" : "none"} />
-        </button>
-      </div>
-    </motion.div>
-  );
-}
-
-// ─── Text / Story card ────────────────────────────────────────────────────────
-
-function TextCard({ post, onTip }: { post: Post; onTip: () => void }) {
-  const { data: author } = useUser(post.authorId);
-  const like = useLike(post.id);
-  const save = useSavePost();
-  const saved = post.saved ?? false;
-  const isStory = post.kind === "story";
-  const accent = isStory ? "hsl(var(--violet))" : "hsl(var(--sage))";
-
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 6 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ type: "spring", damping: 24, stiffness: 200 }}
-      className={`${FEED_CARD} hover:shadow-lg hover:border-border/75 transition-[box-shadow,border-color] duration-300 active:scale-[0.997]`}
-    >
-      {/* Cover image (optional) */}
-      {post.coverUrl && (
-        <Link href={`/post/${post.id}`} className="block relative">
-          <img src={post.coverUrl} alt="" className="w-full aspect-[16/9] object-cover bg-muted" decoding="async" loading="lazy" />
-          <div className="absolute inset-0 bg-gradient-to-t from-black/30 to-transparent" />
-          <div className="absolute top-3 left-3 flex gap-2">
-            <span className="text-[9px] font-['Inter'] tracking-[0.18em] uppercase px-2.5 py-1 rounded-full font-semibold"
-              style={{ background: accent, color: "white", opacity: 0.9 }}>{KIND_LABEL[post.kind]}</span>
-            <AccessBadge post={post} />
-          </div>
-        </Link>
-      )}
-
-      <div className="px-5 pt-5 pb-4">
-        {/* Author row */}
-        <div className="flex items-center gap-2.5 mb-4">
-          <Link href={`/u/${author?.handle ?? ""}`}>
-            <img src={author?.avatarUrl} alt="" className="w-7 h-7 rounded-full object-cover" />
-          </Link>
-          <div className="flex-1 min-w-0">
-            <Link href={`/u/${author?.handle ?? ""}`} className="text-[12px] font-['Inter'] font-medium text-foreground hover:text-terracotta transition-colors">{author?.displayName}</Link>
-          </div>
-          {!post.coverUrl && (
-            <div className="flex items-center gap-1.5">
-              <span className="text-[9px] font-['Inter'] tracking-[0.15em] uppercase px-2.5 py-1 rounded-full font-semibold"
-                style={{ background: accent + "22", color: accent }}>{KIND_LABEL[post.kind]}</span>
-              <AccessBadge post={post} />
-            </div>
-          )}
-        </div>
-
-        {/* Literary title + excerpt */}
-        <Link href={`/post/${post.id}`} className="block group">
-          <div className="text-[22px] font-['Playfair_Display'] font-normal text-foreground leading-[1.28] mb-2.5 group-hover:text-terracotta transition-colors">
-            {post.title}
-          </div>
-          {post.body && (
-            <div className="relative pl-4 border-l-2 mb-1" style={{ borderColor: accent + "55" }}>
-              <div className="text-[13.5px] font-['Playfair_Display'] italic text-foreground/65 leading-[1.7] line-clamp-3">
-                {isStory && <span className="text-[20px] leading-none mr-0.5 text-muted-foreground/50 font-serif" aria-hidden>"</span>}
-                {post.body.split("\n")[0]}
-              </div>
-            </div>
-          )}
-        </Link>
-
-        {/* Tags */}
-        {post.tags?.length > 0 && (
-          <div className="flex gap-1.5 mt-3 flex-wrap">
-            {post.tags.slice(0, 3).map((t) => (
-              <span key={t} className="text-[10px] font-['Inter'] text-muted-foreground"># {t}</span>
-            ))}
-          </div>
-        )}
-
-        {/* Actions */}
-        <div className="flex items-center gap-1 mt-4 pt-3 border-t border-border/40">
-          <motion.button whileTap={{ scale: 0.85 }} onClick={() => like.mutate()}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[12px] font-['Inter'] transition-colors ${post.liked ? "text-terracotta" : "text-muted-foreground hover:text-terracotta"}`}>
-            <Heart size={13} fill={post.liked ? "currentColor" : "none"} />{post.likes}
-          </motion.button>
-          <Link href={`/post/${post.id}`} className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[12px] font-['Inter'] text-muted-foreground hover:text-foreground transition-colors">
-            <MessageCircle size={13} />{post.comments}
-          </Link>
-          <div className="flex-1" />
-          <button onClick={onTip} className="text-[11px] font-['Inter'] font-medium px-3 py-1.5 rounded-full border border-ochre/50 text-ochre hover:bg-ochre hover:text-white transition-colors">Tip ₹</button>
-          <button onClick={() => save.mutate({ postId: post.id, on: !saved })}
-            className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors ${saved ? "text-violet" : "text-muted-foreground hover:text-violet"}`}>
-            <Bookmark size={14} fill={saved ? "currentColor" : "none"} />
-          </button>
-        </div>
-      </div>
-    </motion.div>
-  );
-}
-
-// ─── Reel card — cinematic, immersive, Apple TV + Spotify Canvas ──────────────
-
-function ReelCard({ post, onTip }: { post: Post; onTip: () => void }) {
-  const { data: author } = useUser(post.authorId);
-  const like = useLike(post.id);
-  const save = useSavePost();
-  const saved = post.saved ?? false;
-  const dur = post.durationSec
-    ? `${Math.floor(post.durationSec / 60)}:${String(post.durationSec % 60).padStart(2, "0")}`
-    : null;
-
-  // Cinematic ambient palette based on cover (warm plum default)
-  const ambientBg = post.coverUrl
-    ? undefined
-    : "linear-gradient(160deg, #0E0717 0%, #1A0F2E 45%, #0A1020 75%, #120A1C 100%)";
-
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 6 }}
-      animate={{ opacity: 1, y: 0 }}
-      className={`${FEED_CARD} relative shadow-lg shadow-black/[0.08]`}
-    >
-      {/* Full-height cinematic canvas */}
-      <div className="relative overflow-hidden" style={{ aspectRatio: "4/5" }}>
-        <Link href={`/post/${post.id}`} className="absolute inset-0 z-[1]" aria-label={`Open reel: ${post.title}`} />
-        <Link
-          href={`/reels?focus=${post.id}`}
-          className="absolute top-4 right-4 z-[5] pointer-events-auto flex items-center justify-center w-9 h-9 rounded-full backdrop-blur-md border border-white/28 bg-black/22 active:scale-[0.93] transition-transform"
-          aria-label="Open immersive reels"
-        >
-          <Layers size={15} className="text-white/90" />
-        </Link>
-        {post.videoUrl ? (
-          <video
-            src={post.videoUrl}
-            poster={post.coverUrl || undefined}
-            className="absolute inset-0 w-full h-full object-cover scale-[1.02] bg-muted"
-            muted
-            playsInline
-            loop
-            autoPlay
-            preload="metadata"
-          />
-        ) : post.coverUrl ? (
-          <img src={post.coverUrl} alt="" className="absolute inset-0 w-full h-full object-cover scale-[1.02] transition-transform duration-700 bg-muted" decoding="async" loading="lazy" />
-        ) : (
-          <div className="absolute inset-0" style={{ background: ambientBg }} />
-        )}
-
-        {/* Multi-layer cinematic gradient */}
-        <div className="absolute inset-0" style={{
-          background: "linear-gradient(to bottom, rgba(0,0,0,0.08) 0%, rgba(0,0,0,0.02) 30%, rgba(0,0,0,0.65) 70%, rgba(0,0,0,0.92) 100%)"
-        }} />
-        {/* Subtle side vignette */}
-        <div className="absolute inset-0" style={{
-          background: "linear-gradient(to right, rgba(0,0,0,0.12) 0%, transparent 25%, transparent 75%, rgba(0,0,0,0.12) 100%)"
-        }} />
-
-        {/* Top row — kind badge + duration */}
-        <div className="absolute top-4 left-4 right-4 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span className="text-[8px] font-['Inter'] tracking-[0.28em] uppercase px-2.5 py-1 rounded-full font-semibold backdrop-blur-md"
-              style={{ background: "rgba(155,89,182,0.75)", color: "#fff" }}>
-              Reel{post.videoUrl ? " · film" : ""}
-            </span>
-            <AccessBadge post={post} />
-          </div>
-          {dur && (
-            <span className="text-[10px] font-['Inter'] tabular-nums backdrop-blur-sm px-2 py-0.5 rounded-full"
-              style={{ background: "rgba(0,0,0,0.50)", color: "rgba(255,255,255,0.85)" }}>
-              {dur}
-            </span>
-          )}
-        </div>
-
-        {/* Centered play button — premium minimal */}
-        <div className="absolute inset-0 flex items-center justify-center">
-          <motion.div
-            whileTap={{ scale: 0.88 }}
-            className="flex items-center justify-center"
-            style={{
-              width: 56, height: 56,
-              borderRadius: "50%",
-              background: "rgba(255,255,255,0.14)",
-              backdropFilter: "blur(12px)",
-              border: "1.5px solid rgba(255,255,255,0.35)",
-              boxShadow: "0 8px 32px rgba(0,0,0,0.4)",
-            }}
-          >
-            <Play size={20} className="text-white ml-1" fill="white" />
-          </motion.div>
-        </div>
-
-        {/* Bottom — creator + title block */}
-        <div className="absolute bottom-0 left-0 right-0 px-5 pb-5">
-          {/* Creator strip */}
-          <div className="flex items-center gap-2 mb-2.5">
-            {author?.avatarUrl && (
-              <img src={author.avatarUrl} alt="" className="w-[26px] h-[26px] rounded-full object-cover"
-                style={{ border: "1.5px solid rgba(255,255,255,0.25)" }} />
-            )}
-            <span className="text-[11px] font-['Inter'] tracking-[0.04em]"
-              style={{ color: "rgba(255,255,255,0.70)" }}>
-              {author?.displayName}
-            </span>
-          </div>
-
-          {/* Title — literary typography */}
-          <div className="font-['Playfair_Display'] text-[22px] text-white leading-[1.28] italic"
-            style={{ textShadow: "0 2px 12px rgba(0,0,0,0.6)" }}>
-            <span className="line-clamp-3">{post.title}</span>
-          </div>
-        </div>
-      </div>
-
-      {/* Action bar — floats below, part of card */}
-      <div className={FEED_FOOTER}>
-        <motion.button whileTap={{ scale: 0.82 }} onClick={() => like.mutate()}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[12px] font-['Inter'] transition-colors ${post.liked ? "text-terracotta" : "text-muted-foreground hover:text-terracotta"}`}>
-          <Heart size={13} fill={post.liked ? "currentColor" : "none"} />
-          <span>{post.likes}</span>
-        </motion.button>
-        <Link href={`/post/${post.id}`}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[12px] font-['Inter'] text-muted-foreground hover:text-foreground transition-colors">
-          <MessageCircle size={13} /><span>{post.comments}</span>
-        </Link>
-        <div className="flex-1" />
-        <button onClick={onTip}
-          className="text-[11px] font-['Inter'] font-medium px-3 py-1.5 rounded-full border border-ochre/40 text-ochre hover:bg-ochre hover:text-white transition-all">
-          Appreciate
-        </button>
-        <motion.button whileTap={{ scale: 0.85 }} onClick={() => save.mutate({ postId: post.id, on: !saved })}
-          className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors ${saved ? "text-violet" : "text-muted-foreground hover:text-violet"}`}>
-          <Bookmark size={14} fill={saved ? "currentColor" : "none"} />
-        </motion.button>
-      </div>
-    </motion.div>
-  );
-}
-
-// ─── Post card dispatcher ─────────────────────────────────────────────────────
-
-function PostCard({ post, onTip }: { post: Post; onTip: () => void }) {
-  if (post.kind === "voice") return <VoiceCard post={post} onTip={onTip} />;
-  if (post.kind === "reel")  return <ReelCard  post={post} onTip={onTip} />;
-  return <TextCard post={post} onTip={onTip} />;
-}
+import { StoriesRow } from "@/components/feed/StoriesRow";
+import { FeedTileView } from "@/components/feed/FeedCards";
+import {
+  FEED_BG, FEED_BORDER, FEED_FILTERS, FEED_GOLD, FEED_MUTED, FEED_TEXT,
+  MoKathaWordmark, buildFeedTiles, feedKeyframes, type FeedFilter,
+} from "@/components/feed/home-feed-ui";
 
 // ─── Tip sheet ────────────────────────────────────────────────────────────────
 
@@ -399,24 +24,42 @@ function TipSheet({ postId, onClose }: { postId: string; onClose: () => void }) 
   const { data: author } = useUser(p?.authorId ?? "");
   const sendTip = (amt: number) => { tip.mutate({ id: postId, amount: amt }); onClose(); };
   return (
-    <motion.div className="fixed inset-0 bg-black/50 z-50 flex items-end justify-center"
-      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose}>
-      <motion.div initial={{ opacity: 0, y: "100%" }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: "100%" }}
+    <motion.div
+      className="fixed inset-0 z-50 flex items-end justify-center"
+      style={{ background: "rgba(0,0,0,0.65)" }}
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      onClick={onClose}
+    >
+      <motion.div
+        initial={{ opacity: 0, y: "100%" }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, y: "100%" }}
         transition={SHEET_SPRING}
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-[430px] bg-background rounded-t-3xl px-6 pt-4 pb-10">
-        <div className="w-10 h-1 rounded-full bg-border mx-auto mb-5" />
+        className="w-full max-w-[430px] rounded-t-3xl px-6 pt-4 pb-10"
+        style={{ background: FEED_BG, color: FEED_TEXT, borderTop: `1px solid ${FEED_BORDER}` }}
+      >
+        <div className="w-10 h-1 rounded-full mx-auto mb-5" style={{ background: FEED_BORDER }} />
         <div className="font-['Playfair_Display'] text-[22px] mb-1">Send a tip</div>
-        <div className="text-[12px] text-muted-foreground mb-6">A quiet thank-you to {author?.displayName}.</div>
+        <div className="text-[12px] mb-6" style={{ color: FEED_MUTED }}>A quiet thank-you to {author?.displayName}.</div>
         <div className="grid grid-cols-4 gap-2.5 mb-4">
           {[20, 50, 100, 250].map((v) => (
-            <button key={v} onClick={() => sendTip(v)}
-              className="py-3.5 rounded-xl border border-border text-[14px] font-['Playfair_Display'] hover:bg-terracotta hover:text-white hover:border-terracotta transition-all active:scale-95">
+            <button
+              key={v}
+              type="button"
+              onClick={() => sendTip(v)}
+              className="py-3.5 rounded-xl border text-[14px] font-['Playfair_Display'] active:scale-95 transition-transform"
+              style={{ borderColor: FEED_BORDER, color: FEED_GOLD }}
+            >
               ₹{v}
             </button>
           ))}
         </div>
-        <button onClick={onClose} className="w-full py-3 rounded-xl text-[13px] text-muted-foreground hover:text-foreground transition-colors">Cancel</button>
+        <button type="button" onClick={onClose} className="w-full py-3 rounded-xl text-[13px]" style={{ color: FEED_MUTED }}>
+          Cancel
+        </button>
       </motion.div>
     </motion.div>
   );
@@ -426,200 +69,137 @@ function TipSheet({ postId, onClose }: { postId: string; onClose: () => void }) 
 
 export default function Home() {
   useTitle("Home");
-  const [filter, setFilter] = useState<Filter>("For you");
+  const [filter, setFilter] = useState<FeedFilter>("All");
   const [tipPostId, setTipPostId] = useState<string | null>(null);
   const { data: posts = [], isLoading: feedLoading } = useFeed();
   const { data: user } = useCurrentUser();
   const { data: mehfils = [] } = useMehfils();
-  const liveMehfil = mehfils.find((m) => m.isLive);
+  const liveMehfil = mehfils.find((m) => m.isLive) ?? mehfils[0];
+  const featuredMehfil = mehfils.find((m) => m.isLive) ?? mehfils.sort((a, b) => b.listeners - a.listeners)[0];
+
   usePostsRealtime();
   useAccountSyncRealtime();
   useMehfilRealtime();
   const { data: unreadCount = 0 } = useUnreadCount();
 
-  const filtered = posts.filter((p) => {
-    if (filter === "For you") return true;
-    if (filter === "Voice") return p.kind === "voice";
-    if (filter === "Text") return p.kind === "text";
-    if (filter === "Story") return p.kind === "story";
-    if (filter === "Reel") return p.kind === "reel";
-    return true;
-  });
-
-  const dayTime = `${new Date().toLocaleDateString("en-US", { weekday: "long" })}, ${greeting().toLowerCase()}`;
+  const tiles = buildFeedTiles(posts, mehfils, filter, liveMehfil);
 
   return (
-    <div className="min-h-screen w-full flex flex-col bg-background">
-      <style>{`
-        @keyframes feed-bar { 0%,100% { height: 20%; } 50% { height: 100%; } }
-        @keyframes feed-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-        @keyframes feed-pulse-ring { 0% { transform: scale(0.95); opacity: 0.6; } 70% { transform: scale(1.6); opacity: 0; } 100% { transform: scale(1.6); opacity: 0; } }
-      `}</style>
+    <div className="min-h-screen w-full flex flex-col" style={{ background: FEED_BG, color: FEED_TEXT }}>
+      <style>{feedKeyframes}</style>
 
-      {/* ── Top bar ── */}
-      <div className="px-5 py-3 flex justify-between items-center sticky top-0 z-20 bg-background/92 backdrop-blur-md border-b border-border/30">
-        {/* Logo — clickable to home */}
-        <Link href="/" className="flex items-center gap-2.5 active:opacity-80 transition-opacity">
-          <img src="/logo.png" alt="Mo Katha" className="w-9 h-9 object-contain" draggable={false} />
-          <div>
-            <div className="font-['Playfair_Display'] text-[18px] text-foreground leading-none">
-              Mo{" "}
-              <span className="italic" style={{ background: "linear-gradient(90deg,hsl(var(--terracotta)),hsl(var(--plum)))", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>
-                Katha
-              </span>
-            </div>
-            <div className="text-[10px] font-['Inter'] text-muted-foreground capitalize">{dayTime}</div>
-          </div>
+      {/* Header */}
+      <header
+        className="px-4 py-3 flex justify-between items-center sticky top-0 z-20"
+        style={{ background: "rgba(10,8,6,0.92)", backdropFilter: "blur(16px)", borderBottom: `1px solid ${FEED_BORDER}` }}
+      >
+        <Link href="/" className="active:opacity-80 transition-opacity">
+          <MoKathaWordmark />
         </Link>
-
-        {/* Right icons */}
-        <div className="flex items-center gap-1.5">
-          <Link href="/rewards" className="w-9 h-9 rounded-full flex items-center justify-center hover:bg-ochre/10 transition-colors relative" title="Ink Points">
-            <Zap strokeWidth={1.75} size={16} className="text-ochre" />
+        <div className="flex items-center gap-0.5">
+          <Link
+            href="/search"
+            className="w-9 h-9 rounded-full flex items-center justify-center transition-colors"
+            style={{ color: FEED_MUTED }}
+            aria-label="Search"
+          >
+            <Search strokeWidth={1.75} size={18} />
           </Link>
-          <Link href="/notifications" className="w-9 h-9 rounded-full flex items-center justify-center hover:bg-muted/40 transition-colors relative">
-            <Bell strokeWidth={1.75} size={16} className={unreadCount > 0 ? "text-terracotta" : "text-muted-foreground"} />
+          <Link
+            href="/notifications"
+            className="w-9 h-9 rounded-full flex items-center justify-center relative transition-colors"
+            aria-label="Notifications"
+          >
+            <Bell strokeWidth={1.75} size={18} style={{ color: unreadCount > 0 ? FEED_GOLD : FEED_MUTED }} />
             {unreadCount > 0 && (
-              <span className="absolute top-1 right-1 min-w-[14px] h-[14px] px-[3px] rounded-full bg-terracotta text-white text-[8px] font-bold font-['Inter'] flex items-center justify-center leading-none">
+              <span
+                className="absolute top-0.5 right-0.5 min-w-[15px] h-[15px] px-[3px] rounded-full text-[8px] font-bold font-['Inter'] flex items-center justify-center leading-none"
+                style={{ background: FEED_GOLD, color: FEED_BG }}
+              >
                 {unreadCount > 99 ? "99+" : unreadCount}
               </span>
             )}
           </Link>
-          <Link href="/search" className="w-9 h-9 rounded-full flex items-center justify-center hover:bg-muted/40 transition-colors">
-            <Search strokeWidth={1.75} size={16} className="text-muted-foreground" />
-          </Link>
-          <Link href="/me">
-            <img
-              src={user?.avatarUrl || "https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=80&h=80&fit=crop&crop=faces"}
-              alt=""
-              className="w-8 h-8 rounded-full object-cover border border-border ml-0.5"
-            />
+          <Link href="/me" className="ml-1" aria-label="Profile">
+            <div
+              className="p-[2px] rounded-full"
+              style={{ background: `linear-gradient(135deg, ${FEED_GOLD}, #E8B14A, #9B59B6)` }}
+            >
+              <img
+                src={user?.avatarUrl || "https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=80&h=80&fit=crop&crop=faces"}
+                alt=""
+                className="w-8 h-8 rounded-full object-cover border-2"
+                style={{ borderColor: FEED_BG }}
+              />
+            </div>
           </Link>
         </div>
-      </div>
+      </header>
 
-      {/* ── Mehfil story row ── */}
-      <div className="px-5 pt-2 pb-1 flex gap-2.5 overflow-x-auto no-scrollbar">
-        <Link href="/create/story" className="flex flex-col items-center gap-1 shrink-0 w-[52px]">
-          <div className="w-[46px] h-[46px] rounded-full border-2 border-dashed border-border flex items-center justify-center text-[20px] text-muted-foreground hover:border-terracotta hover:text-terracotta transition-colors">+</div>
-          <div className="text-[9px] font-['Inter'] text-muted-foreground">You</div>
-        </Link>
-        {mehfils.slice(0, 6).map((m) => (
-          <Link key={m.id} href={`/mehfil/${m.id}`} className="flex flex-col items-center gap-1 shrink-0 w-[52px]">
-            <div className="relative">
-              {m.isLive && (
-                <div className="absolute inset-0 rounded-full p-[2px]" style={{ background: "conic-gradient(from 0deg, hsl(var(--terracotta)), hsl(var(--ochre)), hsl(var(--plum)), hsl(var(--terracotta)))", animation: "feed-spin 4s linear infinite" }}>
-                  <div className="w-full h-full rounded-full bg-background" />
-                </div>
-              )}
-              {!m.isLive && <div className="absolute inset-0 rounded-full border-2 border-border/50" />}
-              <img src={m.coverUrl} alt="" className="relative w-[46px] h-[46px] rounded-full object-cover border-2 border-background" />
-              {m.isLive && (
-                <div className="absolute -bottom-0.5 left-1/2 -translate-x-1/2 text-[7px] font-['Inter'] tracking-[0.08em] uppercase text-white bg-destructive rounded-sm px-1.5 py-0.5 font-bold whitespace-nowrap leading-tight">LIVE</div>
-              )}
-            </div>
-            <div className="text-[9px] font-['Inter'] text-foreground/75 text-center line-clamp-1 w-full">{m.title.split(" ")[0]}</div>
-          </Link>
-        ))}
-      </div>
+      <StoriesRow mehfils={mehfils} posts={posts} featuredMehfil={featuredMehfil} />
 
-      {/* ── Feed category tabs — full-width editorial rhythm ── */}
-      <div className="relative border-b border-border/35 mt-1">
-        <div className="grid grid-cols-5 gap-0 px-3">
-          {FILTERS.map((f) => (
+      {/* Filter pills */}
+      <div className="px-4 py-2 flex items-center gap-2 overflow-x-auto no-scrollbar">
+        {FEED_FILTERS.map((f) => {
+          const active = filter === f;
+          return (
             <button
               key={f}
               type="button"
               onClick={() => setFilter(f)}
-              className={`relative py-3.5 text-center text-[11px] font-['Inter'] font-medium tracking-[0.06em] transition-colors select-none ${
-                filter === f ? "text-foreground" : "text-muted-foreground/85 hover:text-foreground/75"
-              }`}
+              className="shrink-0 px-4 py-2 rounded-full text-[11px] font-['Inter'] font-medium tracking-[0.04em] transition-colors"
+              style={
+                active
+                  ? { background: `linear-gradient(90deg, ${FEED_GOLD}, #E8B14A)`, color: FEED_BG }
+                  : { background: "rgba(255,255,255,0.05)", color: FEED_MUTED, border: `1px solid ${FEED_BORDER}` }
+              }
             >
-              <span className="block leading-tight px-0.5 truncate">{f}</span>
-              {filter === f && (
-                <motion.div
-                  layoutId="feed-tab-line"
-                  className="absolute bottom-0 left-[14%] right-[14%] h-[2px] rounded-full bg-foreground/75"
-                  transition={{ type: "spring", stiffness: 420, damping: 34 }}
-                />
-              )}
+              {f}
             </button>
-          ))}
-        </div>
-      </div>
-
-      {/* ── Live banner ── */}
-      {liveMehfil && (
-        <Link href={`/mehfil/${liveMehfil.id}`} className="mx-4 mt-2">
-          <motion.div
-            whileTap={{ scale: 0.985 }}
-            className="rounded-2xl overflow-hidden relative shadow-lg cursor-pointer"
-            style={{ background: "linear-gradient(135deg, hsl(var(--wine)) 0%, #1A0F14 50%, #3B1A1F 100%)" }}
-          >
-            <div className="absolute -top-10 -right-10 w-[180px] h-[180px] rounded-full opacity-40" style={{ background: "radial-gradient(circle,hsl(var(--terracotta)),transparent 70%)", filter: "blur(30px)" }} />
-            <div className="relative px-5 py-4">
-              <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center gap-2 text-[10px] font-['Inter'] tracking-[0.18em] uppercase text-white bg-destructive/90 rounded-full px-3 py-1 font-semibold">
-                  <div className="relative w-1.5 h-1.5">
-                    <div className="absolute inset-0 rounded-full bg-white" />
-                    <div className="absolute inset-0 rounded-full bg-white" style={{ animation: "feed-pulse-ring 1.5s ease-out infinite" }} />
-                  </div>
-                  LIVE NOW
-                </div>
-                <div className="text-[10px] font-['Inter'] text-white/60">{liveMehfil.listeners} listening</div>
-              </div>
-              <div className="flex items-center gap-3">
-                <img src={liveMehfil.coverUrl} alt="" className="w-11 h-11 rounded-full object-cover border-2 border-white/20 shrink-0" />
-                <div className="flex-1 min-w-0">
-                  <div className="text-[17px] font-['Playfair_Display'] text-white leading-tight italic line-clamp-1">{liveMehfil.title}</div>
-                </div>
-                <div className="flex items-end gap-[2.5px] h-5 shrink-0">
-                  {[0.4, 0.7, 0.5, 0.9, 0.6, 0.8, 0.4, 0.7].map((_, i) => (
-                    <div key={i} className="w-[2px] rounded-full bg-ochre" style={{ animation: `feed-bar ${0.6 + (i % 3) * 0.2}s ease-in-out infinite ${i * 0.08}s` }} />
-                  ))}
-                </div>
-              </div>
-            </div>
-          </motion.div>
+          );
+        })}
+        <Link
+          href="/settings"
+          className="shrink-0 w-9 h-9 rounded-full flex items-center justify-center border"
+          style={{ borderColor: FEED_BORDER, color: FEED_MUTED }}
+          aria-label="Feed preferences"
+          title="Feed preferences"
+        >
+          <SlidersHorizontal size={15} />
         </Link>
-      )}
-
-      {/* ── Section heading ── */}
-      <div className="px-5 pt-3 pb-2 flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-        <div className="w-1 h-1 rounded-full bg-terracotta" />
-        <div className="text-[10px] font-['Inter'] tracking-[0.28em] uppercase font-semibold text-muted-foreground">
-          {filter === "For you" ? "Today's voices" : filter}
-        </div>
-        </div>
-        {filter === "Reel" && (
-          <Link href="/reels" className="text-[9px] font-['Inter'] tracking-[0.22em] uppercase text-terracotta/90 shrink-0 py-1 px-2 rounded-full border border-terracotta/25 bg-terracotta/[0.06] active:scale-[0.97] transition-transform">
-            Fullscreen
-          </Link>
-        )}
       </div>
 
-      {/* ── Posts ── */}
-      <div className="flex-1 pb-8 space-y-4 px-4">
+      {/* Masonry feed */}
+      <div className="flex-1 px-4 pb-6">
         {feedLoading && (
-          <div className="space-y-4 animate-pulse">
-            {Array.from({ length: 3 }).map((_, i) => (
-              <div key={i} className="rounded-2xl overflow-hidden bg-card border border-border min-h-[280px]">
-                <div className="aspect-[4/5] max-h-[320px] bg-muted" />
-                <div className="p-4 space-y-2">
-                  <div className="h-4 bg-muted rounded-full w-3/4" />
-                  <div className="h-3 bg-muted rounded-full w-1/2" />
-                </div>
+          <div className="grid grid-cols-2 gap-3 animate-pulse">
+            <div className="col-span-2 h-[220px] rounded-2xl" style={{ background: "rgba(255,255,255,0.04)" }} />
+            <div className="h-[180px] rounded-2xl" style={{ background: "rgba(255,255,255,0.04)" }} />
+            <div className="h-[180px] rounded-2xl" style={{ background: "rgba(255,255,255,0.04)" }} />
+          </div>
+        )}
+
+        {!feedLoading && tiles.length > 0 && (
+          <div
+            className="grid grid-cols-2 gap-3 auto-rows-min"
+            style={{ gridAutoFlow: "dense" }}
+          >
+            {tiles.map((tile) => (
+              <div
+                key={tile.kind === "mehfil" ? `m-${tile.mehfil.id}` : `p-${tile.post.id}`}
+                className={tile.kind === "post" && tile.size === "hero" ? "col-span-2" : ""}
+              >
+                <FeedTileView tile={tile} onTip={setTipPostId} />
               </div>
             ))}
           </div>
         )}
-        {!feedLoading && filtered.map((post) => (
-          <PostCard key={post.id} post={post} onTip={() => setTipPostId(post.id)} />
-        ))}
-        {!feedLoading && filtered.length === 0 && (
-          <div className="text-center py-14">
-            <div className="text-[15px] font-['Playfair_Display'] italic text-muted-foreground">A quiet moment. Nothing here yet.</div>
+
+        {!feedLoading && tiles.length === 0 && (
+          <div className="text-center py-16">
+            <div className="font-['Playfair_Display'] text-[16px] italic" style={{ color: FEED_MUTED }}>
+              A quiet moment. Nothing here yet.
+            </div>
           </div>
         )}
       </div>

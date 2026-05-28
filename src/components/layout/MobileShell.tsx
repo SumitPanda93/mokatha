@@ -7,7 +7,8 @@ import {
 import { motion, AnimatePresence } from "framer-motion";
 import { useAudioPlayer } from "@/lib/audioContext";
 import { SHEET_SPRING } from "@/lib/motionTokens";
-import { useNotificationsRealtime } from "@/lib/store";
+import { useNotificationsRealtime, useUnreadCount } from "@/lib/store";
+import { FEED_BG, FEED_BORDER, FEED_GOLD, FEED_MUTED } from "@/components/feed/home-feed-ui";
 
 const fmtTime = (s: number) =>
   `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
@@ -258,6 +259,7 @@ interface MobileShellProps { children: React.ReactNode }
 
 export default function MobileShell({ children }: MobileShellProps) {
   useNotificationsRealtime();
+  const { data: inboxBadge = 0 } = useUnreadCount();
   const [location, navigate] = useLocation();
   const [listeningMode, setListeningMode] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
@@ -267,14 +269,17 @@ export default function MobileShell({ children }: MobileShellProps) {
 
   const navItems = [
     { id: "home",     label: "Home",     path: "/",         icon: Home },
-    { id: "mehfil",   label: "Mehfil",   path: "/mehfil",   icon: Radio },
+    { id: "mehfil",   label: "Mehfils",  path: "/mehfil",   icon: Radio },
     { id: "create",   label: "Create",   path: "",          icon: Plus, isCreate: true },
-    { id: "messages", label: "Messages", path: "/messages", icon: MessageCircle },
+    { id: "messages", label: "Inbox",    path: "/messages", icon: MessageCircle, badge: inboxBadge },
     { id: "profile",  label: "Profile",  path: "/me",       icon: User },
   ];
 
-  const isActive = (path: string) =>
-    path === "/" ? location === "/" || location === "/home" : path !== "" && location.startsWith(path);
+  const isActive = (path: string) => {
+    if (path === "/") return location === "/" || location === "/home";
+    if (path === "/me") return location.startsWith("/me") || location.startsWith("/settings");
+    return path !== "" && location.startsWith(path);
+  };
 
   // Nav height = 72px content + safe-area. Content needs matching bottom padding.
   const navContentHeight = 72;
@@ -297,34 +302,57 @@ export default function MobileShell({ children }: MobileShellProps) {
       {/* Fixed bottom nav */}
       {!immersiveReels && (
       <nav
-        className="fixed bottom-0 left-0 right-0 z-50 bg-background/95 backdrop-blur-xl border-t border-border"
-        style={{ paddingBottom: "max(env(safe-area-inset-bottom), 8px)" }}
+        className="fixed bottom-0 left-0 right-0 z-50 backdrop-blur-xl"
+        style={{
+          paddingBottom: "max(env(safe-area-inset-bottom), 8px)",
+          background: "rgba(10,8,6,0.96)",
+          borderTop: `1px solid ${FEED_BORDER}`,
+        }}
       >
         <div className="flex justify-between items-center px-5 pt-3 pb-2">
           {navItems.map((item) => {
             const active = isActive(item.path);
             if (item.isCreate) {
               return (
-                <button key={item.id} onClick={() => setCreateOpen(true)}>
+                <button key={item.id} type="button" onClick={() => setCreateOpen(true)}>
                   <div className="relative -top-5">
-                    <motion.div whileTap={{ scale: 0.88 }}
+                    <motion.div
+                      whileTap={{ scale: 0.88 }}
                       className="w-14 h-14 rounded-full flex items-center justify-center shadow-2xl"
-                      style={{ background: "linear-gradient(135deg, hsl(var(--terracotta)), hsl(var(--ochre)))", boxShadow: "0 12px 32px rgba(247,106,74,0.4)" }}>
-                      <Plus size={26} className="text-white" strokeWidth={2} />
+                      style={{
+                        background: `linear-gradient(135deg, ${FEED_GOLD}, #E8B14A)`,
+                        boxShadow: "0 12px 32px rgba(201,168,76,0.35)",
+                      }}
+                    >
+                      <Plus size={26} className="text-[#0A0806]" strokeWidth={2.25} />
                     </motion.div>
                   </div>
                 </button>
               );
             }
+            const badge = "badge" in item ? item.badge : 0;
             return (
               <Link key={item.id} href={item.path}>
-                <motion.div whileTap={{ scale: 0.9 }}
-                  className={`flex flex-col items-center gap-1 cursor-pointer transition-colors ${active ? "text-terracotta" : "text-muted-foreground"}`}>
-                  <item.icon size={22} strokeWidth={active ? 2.25 : 1.5} className={active ? "text-terracotta" : ""} />
-                  <span className={`text-[9px] font-['Inter'] tracking-[0.05em] ${active ? "font-semibold text-terracotta" : ""}`}>
+                <motion.div
+                  whileTap={{ scale: 0.9 }}
+                  className="flex flex-col items-center gap-1 cursor-pointer transition-colors relative"
+                  style={{ color: active ? FEED_GOLD : FEED_MUTED }}
+                >
+                  <div className="relative">
+                    <item.icon size={22} strokeWidth={active ? 2.25 : 1.5} style={{ color: active ? FEED_GOLD : FEED_MUTED }} />
+                    {badge > 0 && item.id === "messages" && (
+                      <span
+                        className="absolute -top-1 -right-1 min-w-[14px] h-[14px] px-[3px] rounded-full text-[7px] font-bold font-['Inter'] flex items-center justify-center leading-none"
+                        style={{ background: FEED_GOLD, color: FEED_BG }}
+                      >
+                        {badge > 99 ? "99+" : badge}
+                      </span>
+                    )}
+                  </div>
+                  <span className={`text-[9px] font-['Inter'] tracking-[0.05em] ${active ? "font-semibold" : ""}`} style={{ color: active ? FEED_GOLD : FEED_MUTED }}>
                     {item.label}
                   </span>
-                  {active && <motion.div layoutId="nav-dot" className="w-1 h-1 rounded-full bg-terracotta" />}
+                  {active && <motion.div layoutId="nav-dot" className="w-1 h-1 rounded-full" style={{ background: FEED_GOLD }} />}
                 </motion.div>
               </Link>
             );
