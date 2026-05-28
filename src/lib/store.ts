@@ -1837,21 +1837,6 @@ export async function registerUser(displayName: string, _phone: string): Promise
 
 // ─── Supabase Auth ────────────────────────────────────────────────────────────
 
-export async function sendPhoneOtp(phone: string): Promise<void> {
-  const intlPhone = `+91${phone.replace(/\D/g, "").slice(-10)}`;
-  const { error } = await supabase.auth.signInWithOtp({ phone: intlPhone });
-  if (error) throw new Error(error.message);
-}
-
-export async function verifyPhoneOtp(phone: string, token: string): Promise<"existing" | "new"> {
-  const intlPhone = `+91${phone.replace(/\D/g, "").slice(-10)}`;
-  const { data, error } = await supabase.auth.verifyOtp({ phone: intlPhone, token, type: "sms" });
-  if (error) throw new Error(error.message);
-  const authId = data.user?.id;
-  if (!authId) throw new Error("Authentication failed");
-  return resolveAuthUser(authId);
-}
-
 export async function sendEmailOtp(email: string): Promise<void> {
   const { error } = await supabase.auth.signInWithOtp({ email, options: { shouldCreateUser: true } });
   if (error) throw new Error(error.message);

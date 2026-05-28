@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useLocation } from "wouter";
 import { motion } from "framer-motion";
-import { ChevronLeft } from "lucide-react";
+import { ArrowRight, ChevronLeft } from "lucide-react";
 import { useTitle } from "@/hooks/useTitle";
 import { signInWithGoogle } from "@/lib/store";
 
@@ -20,6 +20,11 @@ export default function Login() {
       setError(err.message ?? "Google sign-in failed.");
       setLoading(false);
     }
+  };
+
+  const handleBrowse = () => {
+    sessionStorage.setItem("mk-guest", "1");
+    setLocation("/");
   };
 
   return (
@@ -78,7 +83,7 @@ export default function Login() {
             {loading ? (
               <div className="w-5 h-5 rounded-full border-2 border-[#C9A84C] border-t-transparent animate-spin" />
             ) : (
-              <svg width="20" height="20" viewBox="0 0 24 24">
+              <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden>
                 <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
                 <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
                 <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z" />
@@ -87,6 +92,22 @@ export default function Login() {
             )}
             {loading ? "Opening Google…" : "Continue with Google"}
           </button>
+
+          <button
+            onClick={handleBrowse}
+            className="w-full py-3 flex items-center justify-center gap-1.5 text-[13px] font-['Inter'] transition-colors"
+            style={{ color: "rgba(245,243,239,0.38)" }}
+          >
+            Browse stories without signing in
+            <ArrowRight size={13} />
+          </button>
+
+          <p className="text-[10px] text-center mt-3 leading-relaxed" style={{ color: "rgba(245,243,239,0.22)" }}>
+            By continuing you agree to Mo Katha's{" "}
+            <span style={{ color: "rgba(201,168,76,0.6)" }}>Terms</span>
+            {" "}&amp;{" "}
+            <span style={{ color: "rgba(201,168,76,0.6)" }}>Privacy Policy</span>
+          </p>
         </motion.div>
       </div>
     </div>
