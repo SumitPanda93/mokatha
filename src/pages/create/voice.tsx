@@ -110,6 +110,8 @@ export default function CreateVoice() {
   const [coverUrl, setCoverUrl]     = useState<string | null>(null);
   const [coverPreview, setCoverPreview] = useState<string | null>(null);
   const [language, setLanguage]     = useState<"or" | "hi">("or");
+  const [tipLock, setTipLock]       = useState(false);
+  const [minTip, setMinTip]         = useState(10);
   const [uploading, setUploading]   = useState(false);
   const [uploadingCover, setUploadingCover] = useState(false);
   const add = useAddPost();
@@ -220,6 +222,8 @@ export default function CreateVoice() {
       kind: "voice", authorId: me, title: title.trim(), body: caption,
       audioUrl: sel.audioUrl, durationSec: sel.durationSec,
       coverUrl: coverUrl ?? "", language, tags: ["voice"],
+      accessType: tipLock ? "tip" : "free",
+      minTip: tipLock ? minTip : undefined,
     }, { onSuccess: () => { toast.success("Voice poem published!"); setLocation("/"); } });
   };
 
@@ -352,6 +356,24 @@ export default function CreateVoice() {
             </button>
           ))}
         </div>
+
+        <label className="flex items-center gap-3 text-[13px] text-muted-foreground cursor-pointer select-none">
+          <input type="checkbox" checked={tipLock} onChange={(e) => setTipLock(e.target.checked)} className="rounded border-border" />
+          Tip-to-listen (premium lock)
+        </label>
+        {tipLock ? (
+          <div className="flex items-center gap-2 text-[13px]">
+            <span className="text-muted-foreground">Min tip ₹</span>
+            <input
+              type="number"
+              min={10}
+              max={5000}
+              value={minTip}
+              onChange={(e) => setMinTip(Number(e.target.value) || 10)}
+              className="w-24 bg-card border border-border rounded-xl px-3 py-2 outline-none focus:border-terracotta"
+            />
+          </div>
+        ) : null}
       </div>
 
       <div className="px-6 mt-8 mb-10">

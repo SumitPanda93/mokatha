@@ -138,6 +138,8 @@ function LockedOverlay({ post, author, onUnlocked }: { post: any; author: any; o
   const { data: ink } = useInkReward(me);
   const hasPts = (ink?.points ?? 0) >= 50;
   const [, setLocation] = useLocation();
+  const unlockVerb = post.kind === "voice" ? "listen" : post.kind === "reel" ? "watch" : "read";
+  const unlockTitle = post.kind === "voice" ? "Tip to listen" : post.kind === "reel" ? "Tip to watch" : "Tip to read";
 
   return (
     <div className="mx-5 mt-6 rounded-2xl border border-border overflow-hidden">
@@ -164,8 +166,8 @@ function LockedOverlay({ post, author, onUnlocked }: { post: any; author: any; o
           </>
         ) : (
           <>
-            <div className="font-['Playfair_Display'] text-[18px] mb-1">Tip to read</div>
-            <div className="text-[12px] text-muted-foreground mb-4">Minimum ₹{post.minTip ?? 10} to unlock</div>
+            <div className="font-['Playfair_Display'] text-[18px] mb-1">{unlockTitle}</div>
+            <div className="text-[12px] text-muted-foreground mb-4">Minimum ₹{post.minTip ?? 10} to {unlockVerb}</div>
             <div className="grid grid-cols-2 gap-2 mb-3">
               {Array.from(new Set([post.minTip ?? 10, (post.minTip ?? 10) * 2, (post.minTip ?? 10) * 5, 100])).slice(0, 4).map((v: number) => (
                 <button key={v} onClick={() => unlockTip.mutate({ postId: post.id, amount: v }, { onSuccess: (r) => { if (r === "ok") onUnlocked(); } })}
@@ -218,9 +220,10 @@ export default function PostDetail() {
 
   const me = getCurrentUserId() ?? "";
   const isAuthor = post?.authorId === me;
+  const needsUnlock = post?.accessType === "tip" || post?.accessType === "premium";
   useIsSubscribedTo(me, post?.authorId ?? "");
-  const { data: remoteUnlocked = false } = useIsPostUnlocked(me, post?.id ?? "");
-  const locked = post ? !isAuthor && !unlocked && !remoteUnlocked : false;
+  const { data: remoteUnlocked = !needsUnlock } = useIsPostUnlocked(me, post?.id ?? "");
+  const locked = post ? !isAuthor && needsUnlock && !unlocked && !remoteUnlocked : false;
 
   // ── Global audio player integration ──────────────────────────────────────
   const audioPlayer = useAudioPlayer();
@@ -260,6 +263,11 @@ export default function PostDetail() {
   useEffect(() => {
     if (post && me && !isAuthor) earnPts.mutate({ userId: me, points: 5 });
   }, [post?.id]);
+
+  // Stop playback when content is locked
+  useEffect(() => {
+    if (locked && isCurrentTrack) audioPlayer.pause();
+  }, [locked, isCurrentTrack]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Reels: auto-start legacy audio when no video file
   useEffect(() => {
