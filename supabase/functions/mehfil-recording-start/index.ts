@@ -25,6 +25,10 @@ serve(async (req: Request) => {
     });
   }
 
+  let mehfilId = "";
+  let hostId = "";
+  let mehfilTitle = "Gathering replay";
+
   try {
     const authHeader = req.headers.get("Authorization");
     if (!authHeader) {
@@ -35,7 +39,7 @@ serve(async (req: Request) => {
     }
 
     const body = await req.json().catch(() => ({}));
-    const mehfilId = typeof body?.mehfilId === "string" ? body.mehfilId.trim() : "";
+    mehfilId = typeof body?.mehfilId === "string" ? body.mehfilId.trim() : "";
     if (!mehfilId) {
       return new Response(JSON.stringify({ error: "mehfilId required" }), {
         status: 400,
@@ -57,10 +61,12 @@ serve(async (req: Request) => {
         headers: { "Content-Type": "application/json", ...CORS },
       });
     }
+    hostId = user.id;
 
     const admin = createClient(supabaseUrl, svcKey, { auth: { persistSession: false } });
 
     const { data: mf, error: mfErr } = await admin.from("mehfils").select("id,host_id,is_live,session_mode,egress_id,title").eq("id", mehfilId).maybeSingle();
+    mehfilTitle = mf?.title ?? mehfilTitle;
     if (mfErr || !mf) {
       return new Response(JSON.stringify({ error: "Mehfil not found" }), {
         status: 404,
@@ -85,10 +91,36 @@ serve(async (req: Request) => {
       });
     }
 
+    const markReplayFailed = async (recordingError: string) => {
+      const { data: draft } = await admin.from("mehfil_replays").select("id,published").eq("mehfil_id", mehfilId).eq("host_id", user.id).eq("published", false).eq("deleted", false).maybeSingle();
+      const patch = {
+        replay_processing_status: "failed" as const,
+        recording_error: recordingError,
+      };
+      if (draft?.id) {
+        await admin.from("mehfil_replays").update(patch).eq("id", draft.id);
+      } else {
+        const id = `mr${Date.now().toString(36)}_${crypto.randomUUID().slice(0, 8)}`;
+        await admin.from("mehfil_replays").insert({
+          id,
+          mehfil_id: mehfilId,
+          host_id: user.id,
+          audio_url: null,
+          video_url: null,
+          title: mf.title ?? "Gathering replay",
+          published: false,
+          deleted: false,
+          post_id: null,
+          ...patch,
+        });
+      }
+    };
+
     const lkHost = liveKitHttpHost();
     const lkKey = Deno.env.get("LIVEKIT_API_KEY") ?? "";
     const lkSecret = Deno.env.get("LIVEKIT_API_SECRET") ?? "";
     if (!lkHost || !lkKey || !lkSecret) {
+      await markReplayFailed("livekit_egress_not_configured");
       return new Response(JSON.stringify({ error: "LiveKit API not configured on server" }), {
         status: 503,
         headers: { "Content-Type": "application/json", ...CORS },
@@ -103,6 +135,7 @@ serve(async (req: Request) => {
     const forcePathStyle = Deno.env.get("RECORDING_S3_FORCE_PATH_STYLE") === "true";
 
     if (!s3Access || !s3Secret || !s3Bucket) {
+      await markReplayFailed("recording_storage_not_configured");
       return new Response(JSON.stringify({
         error: "Recording storage not configured (RECORDING_S3_* env vars required for egress)",
       }), {
@@ -179,6 +212,34 @@ serve(async (req: Request) => {
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : "Unknown error";
     console.error("[mehfil-recording-start]", msg);
+    if (mehfilId && hostId) {
+      try {
+        const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
+        const svcKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+        if (supabaseUrl && svcKey) {
+          const admin = createClient(supabaseUrl, svcKey, { auth: { persistSession: false } });
+          const { data: draft } = await admin.from("mehfil_replays").select("id").eq("mehfil_id", mehfilId).eq("host_id", hostId).eq("published", false).eq("deleted", false).maybeSingle();
+          const patch = { replay_processing_status: "failed" as const, recording_error: msg.slice(0, 240) };
+          if (draft?.id) await admin.from("mehfil_replays").update(patch).eq("id", draft.id);
+          else {
+            await admin.from("mehfil_replays").insert({
+              id: `mr${Date.now().toString(36)}_${crypto.randomUUID().slice(0, 8)}`,
+              mehfil_id: mehfilId,
+              host_id: hostId,
+              audio_url: null,
+              video_url: null,
+              title: mehfilTitle,
+              published: false,
+              deleted: false,
+              post_id: null,
+              ...patch,
+            });
+          }
+        }
+      } catch {
+        /* best-effort failed marker */
+      }
+    }
     return new Response(JSON.stringify({ error: msg }), {
       status: 500,
       headers: { "Content-Type": "application/json", ...CORS },

@@ -1,7 +1,7 @@
 /**
  * Post-live Mehfil — replay asset arrives via LiveKit egress webhook (no manual upload).
  */
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { motion } from "framer-motion";
 import { X, Sparkles } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -12,6 +12,7 @@ import {
   publishMehfilReplay,
   deleteMehfilReplay,
   retryMehfilReplayProcessing,
+  reconcileMehfilReplayProcessing,
   QK,
   useMehfilReplayDraftRow,
   useMehfilReplayDraftRealtime,
@@ -25,11 +26,12 @@ type Props = {
 };
 
 /** After this, show delayed messaging instead of infinite spinner. */
-const REPLAY_PROCESSING_TIMEOUT_MS = 8 * 60 * 1000;
+const REPLAY_PROCESSING_TIMEOUT_MS = 90 * 1000;
+const RECONCILE_POLL_MS = 20 * 1000;
 
 export default function MehfilReplaySheet({ mehfilId, defaultTitle, onClose }: Props) {
   const qc = useQueryClient();
-  const { data: draftRemote } = useMehfilReplayDraftRow(mehfilId, true);
+  const { data: draftRemote, isLoading: draftLoading } = useMehfilReplayDraftRow(mehfilId, true, true);
   useMehfilReplayDraftRealtime(mehfilId, true);
 
   const [title, setTitle] = useState(defaultTitle || "Gathering replay");
@@ -63,14 +65,38 @@ export default function MehfilReplaySheet({ mehfilId, defaultTitle, onClose }: P
     setIsPrivate(draftRemote.isPrivate);
   }, [draftRemote, defaultTitle]);
 
+  const invalidateReplayQueries = useCallback(() => {
+    qc.invalidateQueries({ queryKey: ["mehfilReplayPublished", mehfilId] });
+    qc.invalidateQueries({ queryKey: QK.mehfilReplayDraft(mehfilId) });
+    qc.invalidateQueries({ queryKey: QK.posts });
+    qc.invalidateQueries({ queryKey: QK.mehfil(mehfilId) });
+    qc.invalidateQueries({ queryKey: QK.mehfils });
+  }, [qc, mehfilId]);
+
   const pipeline = draftRemote?.replayProcessingStatus ?? "pending";
   const hasAsset = !!(draftRemote?.audioUrl?.trim() || draftRemote?.videoUrl?.trim());
-  const assetReady = hasAsset;
+  const assetReady = hasAsset || pipeline === "ready";
   const failed = pipeline === "failed";
   const working =
     !failed &&
     !assetReady &&
-    (pipeline === "recording" || pipeline === "processing" || pipeline === "pending");
+    (draftLoading || pipeline === "recording" || pipeline === "processing" || pipeline === "pending");
+
+  useEffect(() => {
+    if (!working || draftLoading) return;
+    let cancelled = false;
+    const tick = async () => {
+      const res = await reconcileMehfilReplayProcessing(mehfilId);
+      if (cancelled || !res.ok) return;
+      invalidateReplayQueries();
+    };
+    void tick();
+    const timer = window.setInterval(() => { void tick(); }, RECONCILE_POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [working, draftLoading, mehfilId, invalidateReplayQueries]);
 
   useEffect(() => {
     if (!working) {
@@ -95,13 +121,7 @@ export default function MehfilReplaySheet({ mehfilId, defaultTitle, onClose }: P
     }
   }, [assetReady, mehfilId]);
 
-  const invalidateReplay = () => {
-    qc.invalidateQueries({ queryKey: ["mehfilReplayPublished", mehfilId] });
-    qc.invalidateQueries({ queryKey: QK.mehfilReplayDraft(mehfilId) });
-    qc.invalidateQueries({ queryKey: QK.posts });
-    qc.invalidateQueries({ queryKey: QK.mehfil(mehfilId) });
-    qc.invalidateQueries({ queryKey: QK.mehfils });
-  };
+  const invalidateReplay = invalidateReplayQueries;
 
   const savePreferences = async () => {
     setBusy(true);

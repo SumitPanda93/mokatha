@@ -5,44 +5,12 @@
 import { serve } from "https://deno.land/std@0.208.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { WebhookReceiver } from "npm:livekit-server-sdk@2.9.1";
+import {
+  buildReplayPatchFromEgress,
+  recordingPublicBaseUrl,
+} from "../_shared/egressReplay.ts";
 
-function firstOutputLocation(info: Record<string, unknown> | undefined): string {
-  if (!info) return "";
-  const fr = info.fileResults ?? info.file_results;
-  if (Array.isArray(fr) && fr.length > 0) {
-    const row = fr[0] as Record<string, unknown>;
-    const loc = row.location ?? row.filename ?? row.downloadUrl ?? row.download_url;
-    if (typeof loc === "string" && loc.trim()) return loc.trim();
-  }
-  const legacyFile = info.file as Record<string, unknown> | undefined;
-  if (legacyFile) {
-    const loc = legacyFile.location ?? legacyFile.filename;
-    if (typeof loc === "string" && loc.trim()) return loc.trim();
-  }
-  return "";
-}
-
-/** Prefer durable output URL; status enums vary by LiveKit version. */
-function egressLooksFailed(info: Record<string, unknown> | undefined, hasUrl: boolean): boolean {
-  if (hasUrl) return false;
-  if (!info) return true;
-  const st = info.status ?? info.egressStatus;
-  if (typeof st === "string") {
-    return /fail|error/i.test(st);
-  }
-  if (typeof st === "number") {
-    return st === 4;
-  }
-  return true;
-}
-
-function egressErrorMessage(info: Record<string, unknown> | undefined): string {
-  if (!info) return "unknown_egress";
-  const err = info.error ?? info.errorMessage ?? info.error_message;
-  if (typeof err === "string" && err.trim()) return err.trim();
-  const st = info.status ?? info.egressStatus;
-  return typeof st === "string" ? st : "egress_end";
-}
+const EGRESS_END_EVENTS = new Set(["egress_ended", "EgressEnded", "EGRESS_ENDED"]);
 
 serve(async (req: Request) => {
   if (req.method !== "POST") {
@@ -72,43 +40,63 @@ serve(async (req: Request) => {
     return new Response("Unauthorized", { status: 401 });
   }
 
-  if (event.event !== "egress_ended") {
+  const eventName = typeof event.event === "string" ? event.event : "";
+  if (!EGRESS_END_EVENTS.has(eventName)) {
     return new Response("ok", { status: 200 });
   }
 
-  const infoRaw = event.egressInfo;
-  const info = (infoRaw ?? undefined) as Record<string, unknown> | undefined;
+  const info = event.egressInfo;
   const roomNameRaw = info?.roomName ?? info?.room_name;
   const roomName = typeof roomNameRaw === "string" ? roomNameRaw.trim() : "";
   if (!roomName) {
-    console.warn("[livekit-webhook] egress_ended without room name");
+    console.warn("[livekit-webhook] egress_ended without room name", { eventName, egressId: info?.egressId ?? info?.egress_id });
     return new Response("ok", { status: 200 });
   }
 
   const admin = createClient(supabaseUrl, svcKey, { auth: { persistSession: false } });
 
-  const url = firstOutputLocation(info);
-  const failed = egressLooksFailed(info, Boolean(url));
-
-  const { data: mf } = await admin.from("mehfils").select("session_mode,host_id").eq("id", roomName).maybeSingle();
+  const { data: mf } = await admin.from("mehfils").select("session_mode,host_id,title").eq("id", roomName).maybeSingle();
   const studio = mf?.session_mode === "studio";
+  const publicBase = recordingPublicBaseUrl();
+  const patch = buildReplayPatchFromEgress(info, studio, publicBase);
 
-  const patch = failed
-    ? {
-      replay_processing_status: "failed",
-      recording_error: egressErrorMessage(info),
-    }
-    : {
-      replay_processing_status: "ready",
-      recording_error: null as string | null,
-      audio_url: url,
-      video_url: studio ? url : null,
-    };
+  const { data: updated, error: upErr } = await admin
+    .from("mehfil_replays")
+    .update(patch)
+    .eq("mehfil_id", roomName)
+    .eq("published", false)
+    .select("id")
+    .maybeSingle();
 
-  await admin.from("mehfil_replays").update(patch).eq("mehfil_id", roomName).eq("published", false);
+  if (upErr) {
+    console.error("[livekit-webhook] replay update failed", upErr.message, { roomName, patch });
+  }
 
-  // Ensure active egress pointer cleared if LiveKit closes before client stop
+  if (!updated?.id && mf?.host_id) {
+    const id = `mr${Date.now().toString(36)}_${crypto.randomUUID().slice(0, 8)}`;
+    await admin.from("mehfil_replays").insert({
+      id,
+      mehfil_id: roomName,
+      host_id: mf.host_id,
+      title: mf.title ?? "Gathering replay",
+      audio_url: patch.audio_url ?? null,
+      video_url: patch.video_url ?? null,
+      published: false,
+      deleted: false,
+      post_id: null,
+      egress_id: info?.egressId ?? info?.egress_id ?? null,
+      replay_processing_status: patch.replay_processing_status,
+      recording_error: patch.recording_error,
+    });
+  }
+
   await admin.from("mehfils").update({ egress_id: null }).eq("id", roomName);
+
+  console.info("[livekit-webhook] egress finalized", {
+    roomName,
+    status: patch.replay_processing_status,
+    hasAudio: Boolean(patch.audio_url),
+  });
 
   return new Response("ok", { status: 200 });
 });

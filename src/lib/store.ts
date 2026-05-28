@@ -1014,6 +1014,8 @@ export async function retryMehfilReplayProcessing(mehfilId: string): Promise<{ o
       .eq("host_id", me)
       .eq("published", false);
     await stopMehfilRecording(mehfilId);
+    const res = await reconcileMehfilReplayProcessing(mehfilId);
+    if (!res.ok) return { ok: false, error: res.error ?? "reconcile_failed" };
     return { ok: true };
   } catch (e: unknown) {
     const err = e instanceof Error ? e.message : "retry_failed";
@@ -1022,7 +1024,7 @@ export async function retryMehfilReplayProcessing(mehfilId: string): Promise<{ o
   }
 }
 
-export async function stopMehfilRecording(mehfilId: string): Promise<void> {
+export async function stopMehfilRecording(mehfilId: string): Promise<{ ok: boolean; status?: string; error?: string }> {
   if (import.meta.env.DEV) console.info("[replay:egress] stop_request", { mehfil_id: mehfilId });
   try {
     const { data: { session } } = await supabase.auth.getSession();
@@ -1037,12 +1039,48 @@ export async function stopMehfilRecording(mehfilId: string): Promise<void> {
     const json = await res.json().catch(() => ({}));
     if (import.meta.env.DEV) {
       if (!res.ok) console.warn("[replay:egress] stop_failed", { mehfil_id: mehfilId, status: res.status, error: json?.error ?? "" });
-      else console.info("[replay:egress] stop_ok", { mehfil_id: mehfilId, stopped: json?.stopped ?? false });
+      else console.info("[replay:egress] stop_ok", { mehfil_id: mehfilId, stopped: json?.stopped ?? false, status: json?.status ?? "" });
     }
+    if (!res.ok) {
+      return { ok: false, error: typeof json?.error === "string" ? json.error : `recording_stop_${res.status}` };
+    }
+    return { ok: true, status: typeof json?.status === "string" ? json.status : undefined };
   } catch (e: unknown) {
-    if (import.meta.env.DEV) console.warn("[replay:egress] stop_error", { mehfil_id: mehfilId, error: e instanceof Error ? e.message : String(e) });
+    const err = e instanceof Error ? e.message : String(e);
+    if (import.meta.env.DEV) console.warn("[replay:egress] stop_error", { mehfil_id: mehfilId, error: err });
     else console.warn("[mk:recording] stop failed", e);
+    return { ok: false, error: err };
   }
+}
+
+/** Poll LiveKit egress and finalize replay row when webhook is delayed or missing. */
+export async function reconcileMehfilReplayProcessing(mehfilId: string): Promise<{ ok: boolean; status?: string; error?: string }> {
+  if (import.meta.env.DEV) console.info("[Mehfil]", { event: "replay_processing_reconcile", mehfil_id: mehfilId });
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    const res = await fetch(`${FUNCTIONS_ORIGIN}/functions/v1/mehfil-recording-reconcile`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+      },
+      body: JSON.stringify({ mehfilId }),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const err = typeof json?.error === "string" ? json.error : `reconcile_${res.status}`;
+      return { ok: false, error: err };
+    }
+    return { ok: true, status: typeof json?.status === "string" ? json.status : undefined };
+  } catch (e: unknown) {
+    return { ok: false, error: e instanceof Error ? e.message : "reconcile_failed" };
+  }
+}
+
+/** Host end: stop egress then reconcile so replay sheet opens with truthful status. */
+export async function finalizeMehfilRecordingOnEnd(mehfilId: string): Promise<void> {
+  await stopMehfilRecording(mehfilId);
+  await reconcileMehfilReplayProcessing(mehfilId);
 }
 
 export async function startMehfil(id: string): Promise<void> {
@@ -1316,12 +1354,21 @@ export function usePublishedMehfilReplay(mehfilId: string) {
   });
 }
 
-export function useMehfilReplayDraftRow(mehfilId: string, enabled: boolean) {
+export function useMehfilReplayDraftRow(mehfilId: string, enabled: boolean, pollWhileProcessing = false) {
   return useQuery({
     queryKey: QK.mehfilReplayDraft(mehfilId),
     queryFn: () => getMehfilReplayDraft(mehfilId),
     enabled: !!mehfilId && enabled,
     staleTime: 2500,
+    refetchInterval: (query) => {
+      if (!pollWhileProcessing) return false;
+      const row = query.state.data;
+      if (!row) return 4000;
+      const st = row.replayProcessingStatus;
+      const hasAsset = !!(row.audioUrl?.trim() || row.videoUrl?.trim());
+      if (st === "failed" || st === "ready" || hasAsset) return false;
+      return 12000;
+    },
   });
 }
 

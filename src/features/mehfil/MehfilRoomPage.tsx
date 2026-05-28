@@ -25,7 +25,7 @@ import {
   useHostRemoveFromStage,
   type QueueEntry,
   startMehfilRecording,
-  stopMehfilRecording,
+  finalizeMehfilRecordingOnEnd,
 } from "@/lib/store";
 import MehfilReplaySheet from "@/components/MehfilReplaySheet";
 import SupportSheet from "@/components/SupportSheet";
@@ -391,13 +391,26 @@ export default function MehfilRoomPage() {
   const hostInviteMut = useHostInviteSpeaker();
   const hostRemoveMut = useHostRemoveFromStage();
 
-  const handleLeave = () => {
+  const endHostGathering = async () => {
+    session.setHostMenuOpen(false);
+    try {
+      await finalizeMehfilRecordingOnEnd(id);
+      await endMehfilMut.mutateAsync(id);
+      session.finalizeHostEnd();
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Could not end session");
+    }
+  };
+
+  const handleLeave = async () => {
     if (session.isHost && mehfil.isLive) {
-      void stopMehfilRecording(id);
-      endMehfilMut.mutate(id, {
-        onSuccess: () => session.leaveRoom(),
-        onError: (err: Error) => toast.error(err.message || "Could not end session"),
-      });
+      try {
+        await finalizeMehfilRecordingOnEnd(id);
+        await endMehfilMut.mutateAsync(id);
+        session.leaveRoom();
+      } catch (err: unknown) {
+        toast.error(err instanceof Error ? err.message : "Could not end session");
+      }
     } else {
       session.leaveRoom();
     }
@@ -717,10 +730,7 @@ export default function MehfilRoomPage() {
             {session.activeSpeaker && (
               <button type="button" className="w-full text-left px-4 py-3 text-[13px] border-t border-white/[0.06]" onClick={() => { endTurnMut.mutate(id); session.setHostMenuOpen(false); }}><MicOff size={14} className="inline mr-2 opacity-70" />End turn</button>
             )}
-            <button type="button" className="w-full text-left px-4 py-3 text-[13px] border-t border-white/[0.06] text-rose-300" onClick={() => {
-              void stopMehfilRecording(id);
-              endMehfilMut.mutate(id, { onSuccess: () => { session.setHostMenuOpen(false); session.finalizeHostEnd(); } });
-            }}><X size={14} className="inline mr-2" />End gathering</button>
+            <button type="button" className="w-full text-left px-4 py-3 text-[13px] border-t border-white/[0.06] text-rose-300" onClick={() => { void endHostGathering(); }}><X size={14} className="inline mr-2" />End gathering</button>
           </motion.div>
         )}
       </AnimatePresence>

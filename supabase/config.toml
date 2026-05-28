@@ -2,3 +2,6 @@
 
 [functions.livekit-webhook]
 verify_jwt = false
+
+[functions.mehfil-recording-reconcile]
+verify_jwt = true
