@@ -21,17 +21,23 @@ describe("presenceRoleFor", () => {
 });
 
 describe("evaluateJoinCycleGuard", () => {
-  it("blocks duplicate join when cycle started and LiveKit room active", () => {
-    expect(evaluateJoinCycleGuard(true, true)).toEqual({ block: true, resetStarted: false });
+  it("blocks duplicate join when joined and cycle started with LiveKit room active", () => {
+    expect(evaluateJoinCycleGuard(true, true, true)).toEqual({ block: true, resetStarted: false });
   });
 
-  it("resets stale cycle when started but LiveKit room missing", () => {
-    expect(evaluateJoinCycleGuard(true, false)).toEqual({ block: false, resetStarted: true });
+  it("blocks duplicate join when joined and cycle started but LiveKit still connecting", () => {
+    expect(evaluateJoinCycleGuard(true, false, true)).toEqual({ block: true, resetStarted: false });
+  });
+
+  it("resets stale cycle when not joined but refs linger", () => {
+    expect(evaluateJoinCycleGuard(true, false, false)).toEqual({ block: false, resetStarted: true });
+    expect(evaluateJoinCycleGuard(true, true, false)).toEqual({ block: false, resetStarted: true });
+    expect(evaluateJoinCycleGuard(false, true, false)).toEqual({ block: false, resetStarted: true });
   });
 
   it("allows fresh join when cycle not started", () => {
-    expect(evaluateJoinCycleGuard(false, false)).toEqual({ block: false, resetStarted: false });
-    expect(evaluateJoinCycleGuard(false, true)).toEqual({ block: false, resetStarted: false });
+    expect(evaluateJoinCycleGuard(false, false, false)).toEqual({ block: false, resetStarted: false });
+    expect(evaluateJoinCycleGuard(false, true, false)).toEqual({ block: false, resetStarted: true });
   });
 });
 

@@ -247,7 +247,17 @@ export default function MehfilRoomPage() {
     if (!mehfil || session.joined || session.roomEnded) return;
     if (!mehfil.isLive || needsTicket) return;
     void session.joinRoom();
-  }, [mehfil, session.joined, session.roomEnded, needsTicket, session.joinRoom]);
+  }, [mehfil?.id, mehfil?.isLive, session.joined, session.roomEnded, needsTicket, session.joinRoom]);
+
+  const [joinWaitExceeded, setJoinWaitExceeded] = useState(false);
+  useEffect(() => {
+    if (session.joined || !mehfil?.isLive || session.roomEnded) {
+      setJoinWaitExceeded(false);
+      return;
+    }
+    const t = window.setTimeout(() => setJoinWaitExceeded(true), 12_000);
+    return () => clearTimeout(t);
+  }, [session.joined, mehfil?.isLive, session.roomEnded, id]);
 
   const recordingStartedRef = useRef(false);
   const localVidRef = useRef<HTMLDivElement>(null);
@@ -434,6 +444,7 @@ export default function MehfilRoomPage() {
   if (!session.joined && mehfil.isLive && !session.roomEnded) {
     const joinFailure =
       session.joinError ??
+      (joinWaitExceeded ? "livekit_connect_failed" : null) ??
       (session.lkConnectionFailed ? session.mediaFailure?.remote : null);
     if (joinFailure) {
       return (
@@ -443,7 +454,10 @@ export default function MehfilRoomPage() {
           </p>
           <button
             type="button"
-            onClick={() => void session.joinRoom()}
+            onClick={() => {
+              setJoinWaitExceeded(false);
+              void session.retryJoinRoom();
+            }}
             className="px-8 py-3 rounded-full text-[14px] font-medium border border-white/[0.14]"
             style={{ background: `linear-gradient(135deg,${GOLD},#e08055)`, color: BG }}
           >
@@ -618,6 +632,13 @@ export default function MehfilRoomPage() {
                 : session.mediaFailure?.mic ??
                   formatLiveKitConnectError(session.mediaFailure?.remote) ??
                   "Could not connect to live audio."}
+            <button
+              type="button"
+              onClick={() => session.retryLiveKitConnect()}
+              className="mt-2 px-4 py-1.5 rounded-full text-[10px] border border-white/15 bg-white/[0.06]"
+            >
+              Try again
+            </button>
           </motion.div>
         )}
         {!session.audioBlocked && !session.lkConnectionFailed && session.lkConnecting && (

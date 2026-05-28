@@ -63,11 +63,15 @@ export type JoinCycleGuardResult = {
 export function evaluateJoinCycleGuard(
   joinCycleStarted: boolean,
   hasLiveKitRoom: boolean,
+  isJoined: boolean,
 ): JoinCycleGuardResult {
-  if (joinCycleStarted && hasLiveKitRoom) {
+  if (isJoined && joinCycleStarted && hasLiveKitRoom) {
     return { block: true, resetStarted: false };
   }
-  if (joinCycleStarted && !hasLiveKitRoom) {
+  if (isJoined && joinCycleStarted && !hasLiveKitRoom) {
+    return { block: true, resetStarted: false };
+  }
+  if (!isJoined && (joinCycleStarted || hasLiveKitRoom)) {
     return { block: false, resetStarted: true };
   }
   return { block: false, resetStarted: false };
@@ -517,6 +521,13 @@ export function useMehfilRoomSession(
 
   useEffect(() => () => disconnectSession(), [disconnectSession]);
 
+  useEffect(() => {
+    return () => {
+      joinCycleStartedRef.current = false;
+      connectInFlightRef.current = null;
+    };
+  }, [mehfilId]);
+
   const sendHostMuteSpeaker = useCallback((targetUserId: string) => {
     const ch = channelRef.current;
     if (!ch || !isHost || targetUserId === me) return;
@@ -755,28 +766,18 @@ export function useMehfilRoomSession(
     [connectLiveKitSessionOnce, mehfilId, resolveLkWaiters],
   );
 
-  const joinRoom = useCallback(async () => {
-    if (!me || !mehfil) {
-      setJoinError("Sign in to join this Mehfil.");
-      return;
-    }
-    const guard = evaluateJoinCycleGuard(joinCycleStartedRef.current, Boolean(livekitRef.current));
-    if (guard.block) return;
-    if (guard.resetStarted) joinCycleStartedRef.current = false;
-    joinCycleStartedRef.current = true;
-    setJoinError(null);
-    if (import.meta.env.DEV) console.info("[mehfil:session] join_start", { mehfil_id: mehfilId });
-    if (studio && isHost) setHostCameraOn(true);
-    setJoined(true);
-    earnInkPoints(me, 15).catch(console.warn);
+  const resetStaleJoinCycle = useCallback(() => {
+    joinCycleStartedRef.current = false;
+    connectInFlightRef.current = null;
+    livekitRef.current?.disconnect();
+    livekitRef.current = null;
+    channelRef.current?.untrack();
+    if (channelRef.current) supabase.removeChannel(channelRef.current);
+    channelRef.current = null;
+  }, []);
 
-    const canPublish = isHost || myEntry?.status === "speaking";
-    if (isLiveKitConfigured()) {
-      await connectLiveKitSession(canPublish);
-    } else {
-      media.transition("connected");
-      resolveLkWaiters(null);
-    }
+  const setupPresenceChannel = useCallback(() => {
+    if (!me || !mehfil || channelRef.current) return;
 
     const displayName = myUser?.displayName ?? "Guest";
     const avatarUrl = myUser?.avatarUrl ?? "";
@@ -854,18 +855,90 @@ export function useMehfilRoomSession(
       });
 
     channelRef.current = channel;
+  }, [me, myUser, mehfil, mehfilId, isHost, myEntry?.status]);
+
+  const beginLiveKitConnect = useCallback(
+    (canPublish: boolean) => {
+      if (!isLiveKitConfigured()) {
+        media.transition("connected");
+        resolveLkWaiters(null);
+        return;
+      }
+      void connectLiveKitSession(canPublish).catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        lastLkConnectErrorRef.current = msg;
+        media.markFailed({ remote: msg });
+        setJoinError(formatLiveKitConnectError(msg));
+        joinCycleStartedRef.current = false;
+        if (import.meta.env.DEV) {
+          console.info("[Mehfil]", { event: "connect_unhandled_error", message: msg });
+        }
+      });
+    },
+    [connectLiveKitSession, media, resolveLkWaiters],
+  );
+
+  const joinRoom = useCallback(async () => {
+    if (!me || !mehfil) {
+      setJoinError("Sign in to join this Mehfil.");
+      return;
+    }
+    const alreadyInRoom = joined || Boolean(channelRef.current);
+    if (alreadyInRoom && channelRef.current) {
+      const canPublish = isHost || myEntry?.status === "speaking";
+      if (!livekitRef.current && isLiveKitConfigured()) {
+        beginLiveKitConnect(canPublish);
+      }
+      return;
+    }
+    const guard = evaluateJoinCycleGuard(
+      joinCycleStartedRef.current,
+      Boolean(livekitRef.current),
+      alreadyInRoom,
+    );
+    if (guard.block) return;
+    if (guard.resetStarted) resetStaleJoinCycle();
+
+    joinCycleStartedRef.current = true;
+    setJoinError(null);
+    if (import.meta.env.DEV) console.info("[mehfil:session] join_start", { mehfil_id: mehfilId });
+    if (studio && isHost) setHostCameraOn(true);
+    setJoined(true);
+    earnInkPoints(me, 15).catch(console.warn);
+
+    setupPresenceChannel();
+
+    const canPublish = isHost || myEntry?.status === "speaking";
+    beginLiveKitConnect(canPublish);
+    joinCycleStartedRef.current = false;
   }, [
     me,
-    myUser,
     mehfil,
     mehfilId,
+    joined,
     isHost,
     myEntry?.status,
     studio,
-    connectLiveKitSession,
-    media,
-    resolveLkWaiters,
+    resetStaleJoinCycle,
+    setupPresenceChannel,
+    beginLiveKitConnect,
   ]);
+
+  const retryJoinRoom = useCallback(async () => {
+    resetStaleJoinCycle();
+    setJoinError(null);
+    setJoined(false);
+    joinCycleStartedRef.current = false;
+    await joinRoom();
+  }, [joinRoom, resetStaleJoinCycle]);
+
+  const retryLiveKitConnect = useCallback(() => {
+    if (!joined || !me) return;
+    setJoinError(null);
+    media.transition("connecting");
+    const canPublish = isHost || myEntry?.status === "speaking";
+    beginLiveKitConnect(canPublish);
+  }, [joined, me, isHost, myEntry?.status, media, beginLiveKitConnect]);
 
   /** Studio host: connect → verify publish → only then mark mehfil LIVE. */
   const startHostMehfilLive = useCallback(
@@ -891,8 +964,8 @@ export function useMehfilRoomSession(
       if (!joined) {
         joinCycleStartedRef.current = false;
         await joinRoom();
-        lk = livekitRef.current;
-      } else if (!livekitRef.current) {
+      }
+      if (!livekitRef.current) {
         joinCycleStartedRef.current = false;
         lk = await connectLiveKitSession(true);
       } else {
@@ -1057,6 +1130,8 @@ export function useMehfilRoomSession(
     lkConnected,
     lkReconnecting,
     joinRoom,
+    retryJoinRoom,
+    retryLiveKitConnect,
     leaveRoom,
     sendChat,
     buyTicket,
