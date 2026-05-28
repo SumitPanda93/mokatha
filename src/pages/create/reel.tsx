@@ -4,6 +4,7 @@ import { motion } from "framer-motion";
 import { ArrowLeft, Video, Loader2, X } from "lucide-react";
 import { useTitle } from "@/hooks/useTitle";
 import { useAddPost, getCurrentUserId, uploadReelVideoFile, getAdminConfig, uploadReelPosterJpeg, useAdminConfig } from "@/lib/store";
+import { consumeCreateDraft } from "@/lib/createDraft";
 import { toast } from "sonner";
 
 const MIN_REEL_SEG = 0.35;
@@ -88,10 +89,23 @@ export default function CreateReel() {
 
   const [tipLock, setTipLock] = useState(false);
   const [minTip, setMinTip] = useState(10);
+  const [isPrivate, setIsPrivate] = useState(false);
 
   const add = useAddPost();
   const { data: adminCfg } = useAdminConfig();
   const reelMaxSec = adminCfg?.reel_max_duration_sec ?? 120;
+
+  useEffect(() => {
+    const draft = consumeCreateDraft("video");
+    if (!draft) return;
+    const parts = [draft.title, draft.body].filter(Boolean);
+    if (parts.length) setCaption(parts.join("\n\n"));
+    if (draft.accessType === "tip") {
+      setTipLock(true);
+      if (draft.minTip) setMinTip(draft.minTip);
+    }
+    if (draft.isPrivate) setIsPrivate(true);
+  }, []);
 
   const trimRef = useRef({ start: 0, end: 0 });
   useEffect(() => {
@@ -193,6 +207,7 @@ export default function CreateReel() {
         tags,
         accessType: tipLock ? "tip" : "free",
         minTip: tipLock ? minTip : undefined,
+        isPrivate: isPrivate || undefined,
       },
       {
         onSuccess: () => {

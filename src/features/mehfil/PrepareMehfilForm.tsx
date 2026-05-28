@@ -1,7 +1,7 @@
 /**
  * Premium “prepare the mehfil” creation shell — visual layer only; submits via existing useCreateMehfil payload shape.
  */
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { MehfilStudioPreflight } from "@/features/mehfil/MehfilStudioPreflight";
 import { useMehfilMediaContext } from "@/features/mehfil/MehfilMediaContext";
 import { useLocation } from "wouter";
@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { useTitle } from "@/hooks/useTitle";
 import { useCreateMehfil, getCurrentUserId } from "@/lib/store";
+import { consumeCreateDraft } from "@/lib/createDraft";
 import type { Mehfil } from "@/lib/store";
 import { toast } from "sonner";
 
@@ -65,6 +66,13 @@ export function PrepareMehfilForm() {
     return d.toISOString().slice(0, 16);
   });
   const [preflightMehfil, setPreflightMehfil] = useState<{ id: string; title: string } | null>(null);
+
+  useEffect(() => {
+    const draft = consumeCreateDraft("live");
+    if (!draft) return;
+    if (draft.title) setTitle(draft.title);
+    if (draft.body) setDescription(draft.body);
+  }, []);
 
   const particles = useMemo(
     () =>

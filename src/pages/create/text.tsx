@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { motion } from "framer-motion";
 import { ArrowLeft, Lock, Zap } from "lucide-react";
 import { useTitle } from "@/hooks/useTitle";
 import { useAddPost, getCurrentUserId } from "@/lib/store";
+import { consumeCreateDraft } from "@/lib/createDraft";
 import { toast } from "sonner";
 
 const PAPERS = [
@@ -32,7 +33,18 @@ export default function CreateText() {
   const [language, setLanguage] = useState<"or" | "hi">("or");
   const [accessType, setAccessType] = useState<AccessType>("free");
   const [minTip, setMinTip] = useState(10);
+  const [isPrivate, setIsPrivate] = useState(false);
   const add = useAddPost();
+
+  useEffect(() => {
+    const draft = consumeCreateDraft("text");
+    if (!draft) return;
+    if (draft.title) setTitle(draft.title);
+    if (draft.body) setBody(draft.body);
+    if (draft.accessType) setAccessType(draft.accessType === "tip" ? "tip" : "free");
+    if (draft.minTip) setMinTip(draft.minTip);
+    if (draft.isPrivate) setIsPrivate(true);
+  }, []);
 
   const lines = body.split("\n").filter(Boolean).length;
   const chars = body.length;
@@ -47,6 +59,7 @@ export default function CreateText() {
       tags: tags.split(",").map((s) => s.trim()).filter(Boolean),
       accessType,
       minTip: accessType === "tip" ? minTip : undefined,
+      isPrivate: isPrivate || undefined,
     }, { onSuccess: () => { toast.success("Poem published!"); setLocation("/"); } });
   };
 

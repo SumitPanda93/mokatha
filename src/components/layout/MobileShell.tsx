@@ -314,7 +314,7 @@ export default function MobileShell({ children }: MobileShellProps) {
             const active = isActive(item.path);
             if (item.isCreate) {
               return (
-                <button key={item.id} type="button" onClick={() => setCreateOpen(true)}>
+                <button key={item.id} type="button" onClick={() => navigate("/create")}>
                   <div className="relative -top-5">
                     <motion.div
                       whileTap={{ scale: 0.88 }}

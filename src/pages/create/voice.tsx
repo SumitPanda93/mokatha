@@ -4,6 +4,7 @@ import { motion } from "framer-motion";
 import { ArrowLeft, Mic, Square, Pause, Play, Trash2, Loader2, ImagePlus, X } from "lucide-react";
 import { useTitle } from "@/hooks/useTitle";
 import { useAddPost, getCurrentUserId, uploadAudio, uploadPostCoverImage } from "@/lib/store";
+import { consumeCreateDraft } from "@/lib/createDraft";
 import { toast } from "sonner";
 
 type Take = { id: string; durationSec: number; selected: boolean; audioUrl: string };
@@ -112,6 +113,7 @@ export default function CreateVoice() {
   const [language, setLanguage]     = useState<"or" | "hi">("or");
   const [tipLock, setTipLock]       = useState(false);
   const [minTip, setMinTip]         = useState(10);
+  const [isPrivate, setIsPrivate]   = useState(false);
   const [uploading, setUploading]   = useState(false);
   const [uploadingCover, setUploadingCover] = useState(false);
   const add = useAddPost();
@@ -123,6 +125,22 @@ export default function CreateVoice() {
   const chunksRef = useRef<Blob[]>([]);
   const durationRef = useRef(0);
   const coverInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const draft = consumeCreateDraft("voice");
+    if (!draft) return;
+    if (draft.title) setTitle(draft.title);
+    if (draft.body) setCaption(draft.body);
+    if (draft.accessType === "tip") {
+      setTipLock(true);
+      if (draft.minTip) setMinTip(draft.minTip);
+    }
+    if (draft.coverUrl) {
+      setCoverUrl(draft.coverUrl);
+      setCoverPreview(draft.coverUrl);
+    }
+    if (draft.isPrivate) setIsPrivate(true);
+  }, []);
 
   useEffect(() => { durationRef.current = seconds; }, [seconds]);
 
@@ -224,6 +242,7 @@ export default function CreateVoice() {
       coverUrl: coverUrl ?? "", language, tags: ["voice"],
       accessType: tipLock ? "tip" : "free",
       minTip: tipLock ? minTip : undefined,
+      isPrivate: isPrivate || undefined,
     }, { onSuccess: () => { toast.success("Voice poem published!"); setLocation("/"); } });
   };
 
