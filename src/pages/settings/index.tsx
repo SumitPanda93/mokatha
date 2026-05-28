@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { Link, useLocation } from "wouter";
 import {
   User, Lock, Bell, UserX, Radio, Languages, Moon, Volume2, Wifi,
-  HelpCircle, Info, FileText, LogOut, Camera, BadgeCheck, ChevronRight,
+  HelpCircle, Info, FileText, LogOut, Camera, BadgeCheck, ChevronRight, SlidersHorizontal,
 } from "lucide-react";
 import { useTitle } from "@/hooks/useTitle";
 import { useCurrentUser, logout } from "@/lib/store";
@@ -111,6 +111,7 @@ export default function SettingsHome() {
           <SectionLabel>Preferences</SectionLabel>
           <SettingsCard>
             <SettingsLinkRow icon={Radio} label="Mehfil Preferences" hint="Live room defaults" to="/settings/mehfil-preferences" />
+            <SettingsLinkRow icon={SlidersHorizontal} label="Feed Preferences" hint="Home tabs and content" to="/settings/feed-preferences" />
             <SettingsLinkRow
               icon={Languages}
               label="Language"

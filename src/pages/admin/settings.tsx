@@ -43,6 +43,11 @@ export default function AdminSettings() {
   const [reelPosterW, setReelPosterW] = useState<number | null>(null);
   const [reelMaxDurationSec, setReelMaxDurationSec] = useState<number | null>(null);
 
+  const [feedHeroInterval, setFeedHeroInterval] = useState<number | null>(null);
+  const [feedMasonryGap, setFeedMasonryGap] = useState<number | null>(null);
+  const [feedMehfilInsert, setFeedMehfilInsert] = useState<number | null>(null);
+  const [savingFeedLayout, setSavingFeedLayout] = useState(false);
+
   // Hydrate local sliders from DB once loaded
   const effectiveMaxSupport  = maxSupport  ?? config?.max_support_amount  ?? 5;
   const effectiveDailyLimit  = dailyLimit  ?? config?.daily_support_limit ?? 25;
@@ -55,6 +60,10 @@ export default function AdminSettings() {
   const effectiveReelPosterW = reelPosterW ?? config?.reel_poster_width_px ?? 720;
   const effectiveReelMaxDurationSec =
     reelMaxDurationSec ?? config?.reel_max_duration_sec ?? 120;
+
+  const effectiveFeedHeroInterval = feedHeroInterval ?? config?.feed_hero_interval ?? 4;
+  const effectiveFeedMasonryGap = feedMasonryGap ?? config?.feed_masonry_gap_px ?? 12;
+  const effectiveFeedMehfilInsert = feedMehfilInsert ?? config?.feed_mehfil_insert_at ?? 2;
 
   const savePlatform = () => toast.success("Platform settings saved");
 
@@ -83,6 +92,23 @@ export default function AdminSettings() {
       toast.error(e instanceof Error ? e.message : "Could not save media limits");
     } finally {
       setSavingMedia(false);
+    }
+  };
+
+  const saveFeedLayout = async () => {
+    setSavingFeedLayout(true);
+    try {
+      await Promise.all([
+        setAdminConfig("feed_hero_interval", String(effectiveFeedHeroInterval)),
+        setAdminConfig("feed_masonry_gap_px", String(effectiveFeedMasonryGap)),
+        setAdminConfig("feed_mehfil_insert_at", String(effectiveFeedMehfilInsert)),
+      ]);
+      await qc.invalidateQueries({ queryKey: ["adminConfig"] });
+      toast.success("Home feed layout saved");
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "Could not save feed layout");
+    } finally {
+      setSavingFeedLayout(false);
     }
   };
 
@@ -262,6 +288,46 @@ export default function AdminSettings() {
                 </div>
               </>
             )}
+          </div>
+        </div>
+
+        {/* ── Home feed masonry (DB-backed) ── */}
+        <div className="col-span-2">
+          <div className="text-[10px] uppercase tracking-[0.18em] text-[#A0A0A0] mb-2">Home feed layout</div>
+          <div className="bg-[#141414] border border-[#2A2A2A] rounded-2xl divide-y divide-[#2A2A2A]">
+            <div className="px-4 py-3.5 flex items-start justify-between gap-4">
+              <div>
+                <div className="text-[13px] mb-0.5">Hero tile interval</div>
+                <div className="text-[11px] text-[#A0A0A0]">Every N items of a kind may expand to a hero tile (2–12)</div>
+              </div>
+              <input type="number" min={2} max={12} value={effectiveFeedHeroInterval}
+                onChange={(e) => setFeedHeroInterval(Number(e.target.value))}
+                className="w-[4.5rem] shrink-0 bg-[#1A1A1A] border border-[#2A2A2A] rounded-lg px-3 py-2 text-[13px] outline-none text-right" />
+            </div>
+            <div className="px-4 py-3.5 flex items-start justify-between gap-4">
+              <div>
+                <div className="text-[13px] mb-0.5">Masonry gap (px)</div>
+                <div className="text-[11px] text-[#A0A0A0]">Column rhythm between feed cards (8–24)</div>
+              </div>
+              <input type="number" min={8} max={24} value={effectiveFeedMasonryGap}
+                onChange={(e) => setFeedMasonryGap(Number(e.target.value))}
+                className="w-[4.5rem] shrink-0 bg-[#1A1A1A] border border-[#2A2A2A] rounded-lg px-3 py-2 text-[13px] outline-none text-right" />
+            </div>
+            <div className="px-4 py-3.5 flex items-start justify-between gap-4">
+              <div>
+                <div className="text-[13px] mb-0.5">Live Mehfil insert position</div>
+                <div className="text-[11px] text-[#A0A0A0]">Tiles before inserting live room card on All tab</div>
+              </div>
+              <input type="number" min={0} max={8} value={effectiveFeedMehfilInsert}
+                onChange={(e) => setFeedMehfilInsert(Number(e.target.value))}
+                className="w-[4.5rem] shrink-0 bg-[#1A1A1A] border border-[#2A2A2A] rounded-lg px-3 py-2 text-[13px] outline-none text-right" />
+            </div>
+            <div className="px-4 py-3">
+              <button type="button" onClick={() => void saveFeedLayout()} disabled={savingFeedLayout}
+                className="flex items-center gap-2 px-4 py-2 rounded-xl bg-sage text-[#0F0A14] text-[12px] font-medium disabled:opacity-60">
+                {savingFeedLayout ? <><RefreshCw size={12} className="animate-spin" /> Saving…</> : <><Save size={12} /> Save feed layout</>}
+              </button>
+            </div>
           </div>
         </div>
 

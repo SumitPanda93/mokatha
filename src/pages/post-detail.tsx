@@ -16,6 +16,7 @@ import {
 import { useAudioPlayer } from "@/lib/audioContext";
 import { toast } from "sonner";
 import PaymentModal from "@/components/PaymentModal";
+import { PostExtrasBlock, themedBodyClass, themedBodyStyle } from "@/components/create/PostExtras";
 import { trackEvent } from "@/lib/analytics";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -464,15 +465,15 @@ export default function PostDetail() {
         <>
           {isText && post.body && (
             <div className="px-6 mt-6">
-              {/* Reading mode CTA for text/story posts */}
               <button onClick={() => setReadingMode(true)}
                 className="flex items-center gap-2 text-[11px] font-['Inter'] tracking-[0.12em] uppercase text-muted-foreground hover:text-terracotta transition-colors mb-5">
                 <BookOpen size={13} /> Read in full screen
               </button>
-              {/* Preview excerpt */}
-              <div className="font-['Playfair_Display'] text-[18px] leading-[1.75] text-foreground whitespace-pre-line">
+              <div className={`font-['Playfair_Display'] text-[18px] leading-[1.75] text-foreground whitespace-pre-line ${themedBodyClass(post)}`}
+                style={themedBodyStyle(post)}>
                 {post.body}
               </div>
+              <PostExtrasBlock post={post} />
               <div className="mt-4 flex flex-wrap gap-2">
                 {post.tags.map((t) => (
                   <span key={t} className="text-[11px] px-2.5 py-1 rounded-full bg-foreground/5 text-muted-foreground">#{t}</span>
@@ -483,13 +484,18 @@ export default function PostDetail() {
 
           {!isText && post.body && (
             <div className="px-6 mt-6">
-              <div className="font-['Playfair_Display'] text-[18px] leading-[1.7] text-foreground whitespace-pre-line">{post.body}</div>
+              <div className={`font-['Playfair_Display'] text-[18px] leading-[1.7] text-foreground whitespace-pre-line ${themedBodyClass(post)}`}
+                style={themedBodyStyle(post)}>{post.body}</div>
+              <PostExtrasBlock post={post} />
               <div className="mt-4 flex flex-wrap gap-2">
                 {post.tags.map((t) => (
                   <span key={t} className="text-[11px] px-2.5 py-1 rounded-full bg-foreground/5 text-muted-foreground">#{t}</span>
                 ))}
               </div>
             </div>
+          )}
+          {!post.body && (post.poll || post.location || post.taggedUserIds?.length) && (
+            <div className="px-6 mt-6"><PostExtrasBlock post={post} /></div>
           )}
         </>
       )}

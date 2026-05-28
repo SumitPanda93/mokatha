@@ -4,7 +4,7 @@ import { motion } from "framer-motion";
 import { ArrowLeft, Mic, Square, Pause, Play, Trash2, Loader2, ImagePlus, X } from "lucide-react";
 import { useTitle } from "@/hooks/useTitle";
 import { useAddPost, getCurrentUserId, uploadAudio, uploadPostCoverImage } from "@/lib/store";
-import { consumeCreateDraft } from "@/lib/createDraft";
+import { consumeCreateDraft, type CreateDraft, type CreateVisibility } from "@/lib/createDraft";
 import { toast } from "sonner";
 
 type Take = { id: string; durationSec: number; selected: boolean; audioUrl: string };
@@ -114,6 +114,8 @@ export default function CreateVoice() {
   const [tipLock, setTipLock]       = useState(false);
   const [minTip, setMinTip]         = useState(10);
   const [isPrivate, setIsPrivate]   = useState(false);
+  const [visibility, setVisibility] = useState<CreateVisibility>("public");
+  const [hubDraft, setHubDraft]     = useState<CreateDraft | null>(null);
   const [uploading, setUploading]   = useState(false);
   const [uploadingCover, setUploadingCover] = useState(false);
   const add = useAddPost();
@@ -140,6 +142,8 @@ export default function CreateVoice() {
       setCoverPreview(draft.coverUrl);
     }
     if (draft.isPrivate) setIsPrivate(true);
+    if (draft.visibility) setVisibility(draft.visibility);
+    setHubDraft(draft);
   }, []);
 
   useEffect(() => { durationRef.current = seconds; }, [seconds]);
@@ -242,7 +246,13 @@ export default function CreateVoice() {
       coverUrl: coverUrl ?? "", language, tags: ["voice"],
       accessType: tipLock ? "tip" : "free",
       minTip: tipLock ? minTip : undefined,
-      isPrivate: isPrivate || undefined,
+      visibility: visibility ?? (isPrivate ? "private" : "public"),
+      isPrivate: visibility === "private" || isPrivate || undefined,
+      scheduledAt: hubDraft?.scheduledAt,
+      backgroundTheme: hubDraft?.backgroundTheme,
+      location: hubDraft?.location,
+      poll: hubDraft?.poll,
+      taggedUserIds: hubDraft?.taggedUserIds,
     }, { onSuccess: () => { toast.success("Voice poem published!"); setLocation("/"); } });
   };
 

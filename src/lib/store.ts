@@ -5,6 +5,8 @@ import { toast } from "sonner";
 import { supabase } from "@/lib/supabase";
 import { getAuthUserId } from "@/lib/auth";
 import { logOpsEvent } from "@/lib/observability";
+import { filterVisiblePosts } from "@/lib/postVisibility";
+import type { PostBackgroundTheme } from "@/lib/postThemes";
 
 export { supabase };
 
@@ -27,6 +29,26 @@ export type User = {
 };
 
 export type PostKind = "voice" | "text" | "story" | "reel";
+
+export type PostVisibility = "public" | "followers" | "private";
+
+export type PostLocation = {
+  name: string;
+  lat?: number;
+  lng?: number;
+};
+
+export type PollOption = {
+  id: string;
+  label: string;
+  votes: number;
+};
+
+export type PostPoll = {
+  question: string;
+  options: PollOption[];
+  userVotedOptionId?: string;
+};
 
 export type Post = {
   id: string;
@@ -51,8 +73,19 @@ export type Post = {
   minTip?: number;
   hidden?: boolean;
   isPrivate?: boolean;
+  visibility?: PostVisibility;
+  scheduledAt?: string;
+  location?: PostLocation;
+  backgroundTheme?: PostBackgroundTheme;
+  taggedUserIds?: string[];
+  poll?: PostPoll;
   /** Originating Mehfil when this post is a replay or derived session */
   sourceMehfilId?: string;
+};
+
+export type AddPostInput = Omit<Post, "id" | "createdAt" | "likes" | "comments" | "tipsTotal" | "poll" | "taggedUserIds"> & {
+  poll?: { question: string; options: string[] };
+  taggedUserIds?: string[];
 };
 
 export type Comment = {
@@ -172,6 +205,23 @@ export type Conversation = {
   lastMessageAt: string;
 };
 
+export type Story = {
+  id: string;
+  userId: string;
+  mediaUrl: string;
+  mediaType: "image" | "video";
+  createdAt: string;
+  expiresAt: string;
+};
+
+/** Active stories grouped by author for the home stories row + viewer */
+export type StoryRing = {
+  userId: string;
+  stories: Story[];
+  isLive?: boolean;
+  hasUnseen?: boolean;
+};
+
 export type AuthorPlan = {
   authorId: string;
   enabled: boolean;
@@ -224,6 +274,8 @@ function mapUser(u: any): User {
 }
 
 function mapPost(p: any): Post {
+  const visibility = (p.visibility as PostVisibility | undefined) ?? (p.is_private ? "private" : "public");
+  const locName = p.location_name as string | null | undefined;
   return {
     id: p.id,
     kind: p.kind,
@@ -243,7 +295,13 @@ function mapPost(p: any): Post {
     accessType: p.access_type,
     minTip: p.min_tip,
     hidden: p.hidden ?? false,
-    isPrivate: p.is_private ?? false,
+    isPrivate: visibility === "private",
+    visibility,
+    scheduledAt: p.scheduled_at ?? undefined,
+    location: locName ? { name: locName, lat: p.location_lat ?? undefined, lng: p.location_lng ?? undefined } : undefined,
+    backgroundTheme: p.background_theme ?? undefined,
+    taggedUserIds: p.tagged_user_ids ?? undefined,
+    poll: p.poll ?? undefined,
     liked: p.liked,
     saved: p.saved,
     sourceMehfilId: p.source_mehfil_id ?? undefined,
@@ -453,31 +511,84 @@ async function ensureProfileExists(userId: string): Promise<void> {
 
 // ─── Query functions ──────────────────────────────────────────────────────────
 
+async function getFollowingAuthorIds(userId: string): Promise<Set<string>> {
+  const { data: follows } = await supabase.from("follows").select("followee_id").eq("follower_id", userId);
+  return new Set((follows ?? []).map((f: { followee_id: string }) => f.followee_id));
+}
+
+async function enrichPostsWithExtras(posts: Post[], me: string | null): Promise<Post[]> {
+  if (!posts.length) return posts;
+  const ids = posts.map((p) => p.id);
+  const [{ data: tagRows }, { data: pollRows }] = await Promise.all([
+    supabase.from("post_user_tags").select("post_id,user_id").in("post_id", ids),
+    supabase.from("post_polls").select("post_id,question").in("post_id", ids),
+  ]);
+  const tagsByPost = new Map<string, string[]>();
+  for (const r of tagRows ?? []) {
+    const pid = r.post_id as string;
+    const arr = tagsByPost.get(pid) ?? [];
+    arr.push(r.user_id as string);
+    tagsByPost.set(pid, arr);
+  }
+  const pollPostIds = (pollRows ?? []).map((r: { post_id: string }) => r.post_id);
+  const pollsByPost = new Map<string, PostPoll>();
+  if (pollPostIds.length) {
+    const [{ data: options }, { data: votes }] = await Promise.all([
+      supabase.from("post_poll_options").select("*").in("post_id", pollPostIds).order("sort_order"),
+      me
+        ? supabase.from("post_poll_votes").select("post_id,option_id").eq("user_id", me).in("post_id", pollPostIds)
+        : Promise.resolve({ data: [] as { post_id: string; option_id: string }[] }),
+    ]);
+    const voteByPost = new Map((votes ?? []).map((v: { post_id: string; option_id: string }) => [v.post_id, v.option_id]));
+    for (const pr of pollRows ?? []) {
+      const pid = pr.post_id as string;
+      pollsByPost.set(pid, {
+        question: pr.question as string,
+        options: (options ?? [])
+          .filter((o: { post_id: string }) => o.post_id === pid)
+          .map((o: { id: string; label: string; votes: number }) => ({ id: o.id, label: o.label, votes: o.votes ?? 0 })),
+        userVotedOptionId: voteByPost.get(pid),
+      });
+    }
+  }
+  return posts.map((p) => ({
+    ...p,
+    taggedUserIds: tagsByPost.get(p.id) ?? p.taggedUserIds,
+    poll: pollsByPost.get(p.id) ?? p.poll,
+  }));
+}
+
 export async function getPosts(): Promise<Post[]> {
   const me = getCurrentUserId();
-  // Filter: not hidden AND (not private OR authored by current user)
   const postsQuery = me
-    ? supabase.from("posts").select("*").eq("hidden", false).or(`is_private.eq.false,author_id.eq.${me}`).order("created_at", { ascending: false })
+    ? supabase.from("posts").select("*").eq("hidden", false).order("created_at", { ascending: false })
     : supabase.from("posts").select("*").eq("hidden", false).eq("is_private", false).order("created_at", { ascending: false });
-  const [{ data: posts }, { data: likes }, { data: saves }] = await Promise.all([
+  const [{ data: posts }, { data: likes }, { data: saves }, followingIds] = await Promise.all([
     postsQuery,
     me ? supabase.from("post_likes").select("post_id").eq("user_id", me) : Promise.resolve({ data: [] as any[] } as any),
     me ? supabase.from("saved_posts").select("post_id").eq("user_id", me) : Promise.resolve({ data: [] as any[] } as any),
+    me ? getFollowingAuthorIds(me) : Promise.resolve(new Set<string>()),
   ]);
   const likedIds = new Set((likes ?? []).map((l: any) => l.post_id));
   const savedIds = new Set((saves ?? []).map((s: any) => s.post_id));
-  return (posts ?? []).map((p: any) => mapPost({ ...p, liked: likedIds.has(p.id), saved: savedIds.has(p.id) }));
+  const mapped = (posts ?? []).map((p: any) => mapPost({ ...p, liked: likedIds.has(p.id), saved: savedIds.has(p.id) }));
+  const visible = filterVisiblePosts(mapped, me || null, followingIds);
+  return enrichPostsWithExtras(visible, me || null);
 }
 
 export async function getPost(id: string): Promise<Post | null> {
   const me = getCurrentUserId();
-  const [{ data: post }, { data: like }, { data: save }] = await Promise.all([
+  const [{ data: post }, { data: like }, { data: save }, followingIds] = await Promise.all([
     supabase.from("posts").select("*").eq("id", id).maybeSingle(),
     me ? supabase.from("post_likes").select("post_id").eq("user_id", me).eq("post_id", id).maybeSingle() : Promise.resolve({ data: null } as any),
     me ? supabase.from("saved_posts").select("post_id").eq("user_id", me).eq("post_id", id).maybeSingle() : Promise.resolve({ data: null } as any),
+    me ? getFollowingAuthorIds(me) : Promise.resolve(new Set<string>()),
   ]);
   if (!post) return null;
-  return mapPost({ ...post, liked: !!like, saved: !!save });
+  const mapped = mapPost({ ...post, liked: !!like, saved: !!save });
+  if (!filterVisiblePosts([mapped], me || null, followingIds).length) return null;
+  const [enriched] = await enrichPostsWithExtras([mapped], me || null);
+  return enriched ?? null;
 }
 
 export async function getUser(id: string): Promise<User | null> {
@@ -498,17 +609,17 @@ export async function getUserByHandle(handle: string): Promise<User | null> {
 
 export async function getPostsByAuthor(authorId: string): Promise<Post[]> {
   const me = getCurrentUserId();
-  // Show private posts only to the author themselves
-  const q = supabase.from("posts").select("*").eq("author_id", authorId);
-  const filteredQ = me === authorId ? q : q.eq("is_private", false);
-  const [{ data: posts }, { data: likes }, { data: saves }] = await Promise.all([
-    filteredQ.order("created_at", { ascending: false }),
+  const [{ data: posts }, { data: likes }, { data: saves }, followingIds] = await Promise.all([
+    supabase.from("posts").select("*").eq("author_id", authorId).order("created_at", { ascending: false }),
     me ? supabase.from("post_likes").select("post_id").eq("user_id", me) : Promise.resolve({ data: [] as any[] } as any),
     me ? supabase.from("saved_posts").select("post_id").eq("user_id", me) : Promise.resolve({ data: [] as any[] } as any),
+    me ? getFollowingAuthorIds(me) : Promise.resolve(new Set<string>()),
   ]);
   const likedIds = new Set((likes ?? []).map((l: any) => l.post_id));
   const savedIds = new Set((saves ?? []).map((s: any) => s.post_id));
-  return (posts ?? []).map((p: any) => mapPost({ ...p, liked: likedIds.has(p.id), saved: savedIds.has(p.id) }));
+  const mapped = (posts ?? []).map((p: any) => mapPost({ ...p, liked: likedIds.has(p.id), saved: savedIds.has(p.id) }));
+  const visible = filterVisiblePosts(mapped, me || null, followingIds);
+  return enrichPostsWithExtras(visible, me || null);
 }
 
 export async function getPostComments(postId: string): Promise<Comment[]> {
@@ -563,9 +674,32 @@ export async function getNotifications(): Promise<Notification[]> {
 }
 
 export async function getUnreadCount(): Promise<number> {
+  return getUnreadNotificationCount();
+}
+
+/** Unread non-message notifications (bell icon on home). */
+export async function getUnreadNotificationCount(): Promise<number> {
   const me = getCurrentUserId();
   if (!me) return 0;
-  const { count } = await supabase.from("notifications").select("id", { count: "exact", head: true }).eq("recipient_id", me).eq("read", false);
+  const { count } = await supabase
+    .from("notifications")
+    .select("id", { count: "exact", head: true })
+    .eq("recipient_id", me)
+    .eq("read", false)
+    .neq("kind", "message");
+  return count ?? 0;
+}
+
+/** Unread message notifications only (inbox tab badge). */
+export async function getUnreadMessageCount(): Promise<number> {
+  const me = getCurrentUserId();
+  if (!me) return 0;
+  const { count } = await supabase
+    .from("notifications")
+    .select("id", { count: "exact", head: true })
+    .eq("recipient_id", me)
+    .eq("read", false)
+    .eq("kind", "message");
   return count ?? 0;
 }
 
@@ -939,13 +1073,107 @@ export async function unsavePost(postId: string): Promise<void> {
 }
 
 export async function joinMehfil(id: string): Promise<void> {
+  const me = getCurrentUserId();
   const { data } = await supabase.from("mehfils").select("listeners").eq("id", id).maybeSingle();
   await supabase.from("mehfils").update({ listeners: (data?.listeners ?? 0) + 1 }).eq("id", id);
+  if (me) {
+    await supabase.from("mehfil_listeners").upsert({ mehfil_id: id, user_id: me, joined_at: new Date().toISOString() });
+  }
 }
 
 export async function leaveMehfil(id: string): Promise<void> {
+  const me = getCurrentUserId();
   const { data } = await supabase.from("mehfils").select("listeners").eq("id", id).maybeSingle();
   await supabase.from("mehfils").update({ listeners: Math.max(0, (data?.listeners ?? 1) - 1) }).eq("id", id);
+  if (me) {
+    await supabase.from("mehfil_listeners").delete().eq("mehfil_id", id).eq("user_id", me);
+  }
+}
+
+function mapStory(s: any): Story {
+  return {
+    id: s.id,
+    userId: s.user_id,
+    mediaUrl: s.media_url,
+    mediaType: s.media_type === "video" ? "video" : "image",
+    createdAt: s.created_at,
+    expiresAt: s.expires_at,
+  };
+}
+
+const STORY_TTL_MS = 24 * 60 * 60 * 1000;
+
+export async function getActiveStories(): Promise<StoryRing[]> {
+  const now = new Date().toISOString();
+  const { data } = await supabase
+    .from("stories")
+    .select("*")
+    .gt("expires_at", now)
+    .order("created_at", { ascending: true });
+  const stories = (data ?? []).map(mapStory);
+  const byUser = new Map<string, Story[]>();
+  for (const s of stories) {
+    const list = byUser.get(s.userId) ?? [];
+    list.push(s);
+    byUser.set(s.userId, list);
+  }
+  const [{ data: liveMehfils }] = await Promise.all([
+    supabase.from("mehfils").select("host_id").eq("is_live", true),
+  ]);
+  const liveHosts = new Set((liveMehfils ?? []).map((m: { host_id: string }) => m.host_id));
+  return [...byUser.entries()].map(([userId, userStories]) => ({
+    userId,
+    stories: userStories,
+    isLive: liveHosts.has(userId),
+  }));
+}
+
+export async function createStory(mediaUrl: string, mediaType: "image" | "video" = "image"): Promise<Story> {
+  const me = getCurrentUserId();
+  if (!me) throw new Error("not_authenticated");
+  const now = Date.now();
+  const row = {
+    id: `st${uid()}`,
+    user_id: me,
+    media_url: mediaUrl,
+    media_type: mediaType,
+    created_at: new Date(now).toISOString(),
+    expires_at: new Date(now + STORY_TTL_MS).toISOString(),
+  };
+  const { error } = await supabase.from("stories").insert(row);
+  if (error) throw new Error(error.message);
+  return mapStory(row);
+}
+
+export async function deleteStory(storyId: string): Promise<void> {
+  const me = getCurrentUserId();
+  if (!me) throw new Error("not_authenticated");
+  await supabase.from("stories").delete().eq("id", storyId).eq("user_id", me);
+}
+
+export async function uploadStoryMedia(userId: string, file: File): Promise<string> {
+  const cfg = await getAdminConfig();
+  assertUploadWithinMb(file.size, Math.min(cfg.max_upload_avatar_mb * 5, 25), "Story media");
+  const ext = file.name.split(".").pop()?.toLowerCase() ?? "jpg";
+  const path = `${userId}/${Date.now()}.${ext}`;
+  const { error } = await supabase.storage.from("stories").upload(path, file, { upsert: false, contentType: file.type });
+  if (error) throw new Error(error.message);
+  const { data } = supabase.storage.from("stories").getPublicUrl(path);
+  return data.publicUrl;
+}
+
+export async function getMehfilListenerUserIds(mehfilId: string, limit = 5): Promise<string[]> {
+  if (!mehfilId) return [];
+  const { data: mf } = await supabase.from("mehfils").select("host_id").eq("id", mehfilId).maybeSingle();
+  const { data: rows } = await supabase
+    .from("mehfil_listeners")
+    .select("user_id")
+    .eq("mehfil_id", mehfilId)
+    .order("joined_at", { ascending: false })
+    .limit(limit);
+  const ids = (rows ?? []).map((r: { user_id: string }) => r.user_id);
+  if (mf?.host_id && !ids.includes(mf.host_id)) ids.unshift(mf.host_id);
+  return [...new Set(ids)].slice(0, limit);
 }
 
 /** Notify followers when host opens a live Mehfil (actor must be host — RLS). */
@@ -1137,10 +1365,29 @@ export async function createMehfil(payload: Omit<Mehfil, "id" | "listeners" | "i
   return { ...payload, id, listeners: 0, isLive: false };
 }
 
-export async function addPost(post: Omit<Post, "id" | "createdAt" | "likes" | "comments" | "tipsTotal">): Promise<Post> {
+export async function searchUsersForTag(q: string): Promise<User[]> {
+  if (!q.trim()) return [];
+  const s = q.trim();
+  const { data } = await supabase
+    .from("profiles")
+    .select("*")
+    .or(`handle.ilike.%${s}%,display_name.ilike.%${s}%`)
+    .limit(12);
+  return (data ?? []).map(mapUser);
+}
+
+export async function votePoll(postId: string, optionId: string): Promise<void> {
+  const me = getCurrentUserId();
+  if (!me) throw new Error("not_authenticated");
+  const { error } = await supabase.rpc("cast_poll_vote", { p_post_id: postId, p_option_id: optionId });
+  if (error) throw new Error(error.message);
+}
+
+export async function addPost(post: AddPostInput): Promise<Post> {
   const authId = getCurrentUserId();
   await ensureProfileExists(authId);
   const id = `p${uid()}`;
+  const visibility = post.visibility ?? (post.isPrivate ? "private" : "public");
   const created_at = new Date().toISOString();
   const row: Record<string, unknown> = {
     id,
@@ -1155,14 +1402,22 @@ export async function addPost(post: Omit<Post, "id" | "createdAt" | "likes" | "c
     tips_total: 0,
     tags: post.tags ?? [],
     access_type: post.accessType ?? "free",
+    visibility,
+    is_private: visibility === "private",
   };
   if (post.videoUrl != null) row.video_url = post.videoUrl;
   if (post.audioUrl != null) row.audio_url = post.audioUrl;
   if (post.coverUrl != null) row.cover_url = post.coverUrl;
   if (post.durationSec != null) row.duration_sec = post.durationSec;
   if (post.minTip != null) row.min_tip = post.minTip;
-  if (post.isPrivate === true) row.is_private = true;
   if (post.sourceMehfilId != null) row.source_mehfil_id = post.sourceMehfilId;
+  if (post.scheduledAt) row.scheduled_at = post.scheduledAt;
+  if (post.backgroundTheme) row.background_theme = post.backgroundTheme;
+  if (post.location?.name) {
+    row.location_name = post.location.name;
+    if (post.location.lat != null) row.location_lat = post.location.lat;
+    if (post.location.lng != null) row.location_lng = post.location.lng;
+  }
   console.log("[mk:addPost] inserting", { row, authId });
   const { data, error } = await supabase.from("posts").insert(row).select().maybeSingle();
   if (error) {
@@ -1170,7 +1425,49 @@ export async function addPost(post: Omit<Post, "id" | "createdAt" | "likes" | "c
     throw new Error(`${error.code}: ${error.message}${error.hint ? ` — ${error.hint}` : ""}${error.details ? ` | ${error.details}` : ""}`);
   }
   console.log("[mk:addPost] OK", data);
-  return { ...post, id, createdAt: created_at, likes: 0, comments: 0, tipsTotal: 0 };
+
+  if (post.taggedUserIds?.length) {
+    const tagRows = post.taggedUserIds.map((userId) => ({ post_id: id, user_id: userId }));
+    await supabase.from("post_user_tags").insert(tagRows);
+  }
+
+  if (post.poll?.question && post.poll.options.filter(Boolean).length >= 2) {
+    await supabase.from("post_polls").insert({ post_id: id, question: post.poll.question.trim() });
+    const optRows = post.poll.options
+      .map((label) => label.trim())
+      .filter(Boolean)
+      .slice(0, 6)
+      .map((label, i) => ({ id: `po${uid()}`, post_id: id, label, sort_order: i, votes: 0 }));
+    if (optRows.length >= 2) await supabase.from("post_poll_options").insert(optRows);
+  }
+
+  return {
+    kind: post.kind,
+    authorId: post.authorId,
+    title: post.title,
+    body: post.body,
+    videoUrl: post.videoUrl,
+    audioUrl: post.audioUrl,
+    coverUrl: post.coverUrl,
+    durationSec: post.durationSec,
+    language: post.language,
+    tags: post.tags ?? [],
+    accessType: post.accessType,
+    minTip: post.minTip,
+    hidden: post.hidden,
+    sourceMehfilId: post.sourceMehfilId,
+    id,
+    visibility,
+    isPrivate: visibility === "private",
+    scheduledAt: post.scheduledAt,
+    location: post.location,
+    backgroundTheme: post.backgroundTheme,
+    taggedUserIds: post.taggedUserIds,
+    createdAt: created_at,
+    likes: 0,
+    comments: 0,
+    tipsTotal: 0,
+  };
 }
 
 // ─── Mehfil replay (draft → publish as voice post + tag) ───────────────────────
@@ -1896,6 +2193,8 @@ export const QK = {
   inkReward: (userId: string) => ["inkReward", userId] as const,
   topReaders: ["topReaders"] as const,
   mehfilReplayDraft: (mehfilId: string) => ["mehfilReplayDraft", mehfilId] as const,
+  stories: ["stories"] as const,
+  mehfilListeners: (mehfilId: string) => ["mehfilListeners", mehfilId] as const,
 };
 
 // ─── React Query hooks ────────────────────────────────────────────────────────
@@ -1943,7 +2242,22 @@ export const useNotifications = () => useQ(QK.notifications, getNotifications);
 // Lightweight unread count — key is a child of QK.notifications so it gets
 // invalidated for free whenever the realtime hook invalidates QK.notifications.
 export const useUnreadCount = () =>
-  useQuery({ queryKey: [...QK.notifications, "count"], queryFn: getUnreadCount, staleTime: 15_000 });
+  useQuery({ queryKey: [...QK.notifications, "count"], queryFn: getUnreadNotificationCount, staleTime: 15_000 });
+
+export const useUnreadNotificationCount = useUnreadCount;
+
+export const useUnreadMessageCount = () =>
+  useQuery({ queryKey: [...QK.notifications, "messageCount"], queryFn: getUnreadMessageCount, staleTime: 15_000 });
+
+export const useStories = () => useQ(QK.stories, getActiveStories);
+
+export const useMehfilListeners = (mehfilId: string) =>
+  useQuery({
+    queryKey: QK.mehfilListeners(mehfilId),
+    queryFn: () => getMehfilListenerUserIds(mehfilId),
+    enabled: !!mehfilId,
+    staleTime: 20_000,
+  });
 export const useReports = () => useQ(QK.reports, getReports);
 export const useAdminLogs = () => useQ(QK.adminLogs, getAdminLogs);
 export const useTopCreators = (_limit?: number) => {
@@ -2116,7 +2430,7 @@ export function useMarkNotificationRead() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => markNotificationRead(id),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: QK.notifications }); },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: QK.notifications }); qc.invalidateQueries({ queryKey: [...QK.notifications, "count"] }); qc.invalidateQueries({ queryKey: [...QK.notifications, "messageCount"] }); },
   });
 }
 
@@ -2235,9 +2549,20 @@ export function useStartMehfil() {
 export function useAddPost() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (post: Omit<Post, "id" | "createdAt" | "likes" | "comments" | "tipsTotal">) => addPost(post),
+    mutationFn: async (post: AddPostInput) => addPost(post),
     onSuccess: () => { qc.invalidateQueries(); toast.success("Published!"); },
     onError: (e: Error) => { toast.error(`Could not publish: ${e.message}`); },
+  });
+}
+
+export function useVotePoll(postId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (optionId: string) => votePoll(postId, optionId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: QK.post(postId) });
+      qc.invalidateQueries({ queryKey: QK.posts });
+    },
   });
 }
 
@@ -2246,6 +2571,30 @@ export function useSavePost() {
   return useMutation({
     mutationFn: async (vars: { postId: string; on: boolean }) => vars.on ? savePost(vars.postId) : unsavePost(vars.postId),
     onSuccess: () => { qc.invalidateQueries(); },
+  });
+}
+
+export function useCreateStory() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (vars: { mediaUrl: string; mediaType?: "image" | "video" }) =>
+      createStory(vars.mediaUrl, vars.mediaType ?? "image"),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: QK.stories });
+      toast.success("Story shared — visible for 24 hours");
+    },
+    onError: (e: Error) => toast.error(e.message ?? "Could not share story"),
+  });
+}
+
+export function useDeleteStory() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (storyId: string) => deleteStory(storyId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: QK.stories });
+      toast.success("Story removed");
+    },
   });
 }
 
@@ -2488,6 +2837,7 @@ export function useNotificationsRealtime() {
         .on("postgres_changes", { event: "INSERT", schema: "public", table: "notifications", filter: `recipient_id=eq.${me}` }, (payload) => {
           qcNotifRealtimeRef.current?.invalidateQueries({ queryKey: QK.notifications });
           qcNotifRealtimeRef.current?.invalidateQueries({ queryKey: [...QK.notifications, "count"] });
+          qcNotifRealtimeRef.current?.invalidateQueries({ queryKey: [...QK.notifications, "messageCount"] });
           const row = payload.new as { kind?: string; body?: string; target_id?: string };
           if (row?.kind === "mehfil-start" && row.body && row.target_id) {
             toast.message(row.body, {
@@ -2707,6 +3057,12 @@ export type AdminConfig = {
   reel_poster_width_px: number;
   /** Maximum published reel clip length (trim end − start), seconds */
   reel_max_duration_sec: number;
+  /** Every N items of a kind may become a hero tile in the home masonry feed */
+  feed_hero_interval: number;
+  /** Masonry column gap in pixels */
+  feed_masonry_gap_px: number;
+  /** Insert live mehfil card after this many tiles (All filter) */
+  feed_mehfil_insert_at: number;
 };
 
 const ADMIN_CONFIG_DEFAULTS: AdminConfig = {
@@ -2719,6 +3075,9 @@ const ADMIN_CONFIG_DEFAULTS: AdminConfig = {
   max_upload_avatar_mb: 5,
   reel_poster_width_px: 720,
   reel_max_duration_sec: 120,
+  feed_hero_interval: 4,
+  feed_masonry_gap_px: 12,
+  feed_mehfil_insert_at: 2,
 };
 
 function clampAdminInt(raw: unknown, lo: number, hi: number, fallback: number): number {
@@ -2809,6 +3168,9 @@ export async function getAdminConfig(): Promise<AdminConfig> {
     max_upload_avatar_mb: clampAdminInt(m.max_upload_avatar_mb, 1, 50, ADMIN_CONFIG_DEFAULTS.max_upload_avatar_mb),
     reel_poster_width_px: clampAdminInt(m.reel_poster_width_px, 320, 4096, ADMIN_CONFIG_DEFAULTS.reel_poster_width_px),
     reel_max_duration_sec: clampAdminInt(m.reel_max_duration_sec, 5, 600, ADMIN_CONFIG_DEFAULTS.reel_max_duration_sec),
+    feed_hero_interval: clampAdminInt(m.feed_hero_interval, 2, 12, ADMIN_CONFIG_DEFAULTS.feed_hero_interval),
+    feed_masonry_gap_px: clampAdminInt(m.feed_masonry_gap_px, 8, 24, ADMIN_CONFIG_DEFAULTS.feed_masonry_gap_px),
+    feed_mehfil_insert_at: clampAdminInt(m.feed_mehfil_insert_at, 0, 8, ADMIN_CONFIG_DEFAULTS.feed_mehfil_insert_at),
   };
 }
 
@@ -3118,6 +3480,21 @@ export async function checkHandleAvailable(handle: string, excludeUserId: string
     .eq("handle", handle.toLowerCase())
     .neq("id", excludeUserId);
   return (count ?? 1) === 0;
+}
+
+// ─── Stories realtime ─────────────────────────────────────────────────────────
+
+export function useStoriesRealtime() {
+  const qc = useQueryClient();
+  useEffect(() => {
+    const channel = supabase
+      .channel("realtime:stories")
+      .on("postgres_changes", { event: "*", schema: "public", table: "stories" }, () => {
+        qc.invalidateQueries({ queryKey: QK.stories });
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [qc]);
 }
 
 // ─── Legacy stubs ─────────────────────────────────────────────────────────────

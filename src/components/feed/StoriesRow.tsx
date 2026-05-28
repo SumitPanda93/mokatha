@@ -1,6 +1,8 @@
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 import { Plus, Sparkles } from "lucide-react";
-import type { Mehfil, Post } from "@/lib/store";
+import type { Mehfil } from "@/lib/store";
+import { useCurrentUser, useUser } from "@/lib/store";
+import type { StoryRing as StoryRingData } from "@/lib/store";
 import { FEED_BORDER, FEED_GOLD, FEED_MUTED, FEED_TEXT, formatFeedStat } from "./home-feed-ui";
 
 type StoryRingProps = { live?: boolean; children: React.ReactNode };
@@ -20,67 +22,97 @@ function StoryRing({ live, children }: StoryRingProps) {
   );
 }
 
-export function StoriesRow({
-  mehfils,
-  posts,
-  featuredMehfil,
+function StoryAvatarButton({
+  ring,
+  onOpen,
 }: {
-  mehfils: Mehfil[];
-  posts: Post[];
-  featuredMehfil?: Mehfil;
+  ring: StoryRingData;
+  onOpen: (userId: string) => void;
 }) {
-  const storyMehfils = mehfils.filter((m) => m.isLive).slice(0, 5);
-  const offlineMehfils = mehfils.filter((m) => !m.isLive).slice(0, 3);
-  const authorAvatars = [...new Map(posts.map((p) => [p.authorId, p])).values()].slice(0, 2);
+  const { data: user } = useUser(ring.userId);
+  const label = user?.displayName?.split(" ")[0] ?? "Story";
 
   return (
-    <div className="px-4 pb-2 flex gap-3 overflow-x-auto no-scrollbar items-stretch">
-      <Link href="/create/story" className="flex flex-col items-center gap-1 shrink-0 w-[58px]">
-        <div
-          className="w-[52px] h-[52px] rounded-full flex items-center justify-center border-2 border-dashed"
-          style={{ borderColor: FEED_BORDER, color: FEED_GOLD }}
-        >
-          <Plus size={22} strokeWidth={1.75} />
-        </div>
-        <span className="text-[9px] font-['Inter']" style={{ color: FEED_MUTED }}>Your Story</span>
-      </Link>
-
-      {storyMehfils.map((m) => (
-        <Link key={m.id} href={`/mehfil/${m.id}`} className="flex flex-col items-center gap-1 shrink-0 w-[58px] relative">
-          <div className="relative">
-            <StoryRing live>
-              <img src={m.coverUrl} alt="" className="w-[48px] h-[48px] rounded-full object-cover" />
-            </StoryRing>
-            <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 text-[7px] font-bold uppercase text-white bg-red-600 rounded px-1 py-px leading-none whitespace-nowrap">
-              LIVE
-            </span>
-          </div>
-          <span className="text-[9px] font-['Inter'] text-center line-clamp-1 w-full mt-2" style={{ color: FEED_TEXT }}>
-            {m.title.split(" ")[0]}
-          </span>
-        </Link>
-      ))}
-
-      {offlineMehfils.map((m) => (
-        <Link key={m.id} href={`/mehfil/${m.id}`} className="flex flex-col items-center gap-1 shrink-0 w-[58px]">
-          <StoryRing>
-            <img src={m.coverUrl} alt="" className="w-[48px] h-[48px] rounded-full object-cover" />
-          </StoryRing>
-          <span className="text-[9px] font-['Inter'] text-center line-clamp-1 w-full" style={{ color: FEED_MUTED }}>
-            {m.title.split(" ")[0]}
-          </span>
-        </Link>
-      ))}
-
-      {authorAvatars.map((p) => (
-        <Link key={p.id} href={`/post/${p.id}`} className="flex flex-col items-center gap-1 shrink-0 w-[58px]">
-          <StoryRing>
+    <button
+      type="button"
+      onClick={() => onOpen(ring.userId)}
+      className="flex flex-col items-center gap-1 shrink-0 w-[58px]"
+    >
+      <div className="relative">
+        <StoryRing live={ring.isLive}>
+          {user?.avatarUrl ? (
+            <img src={user.avatarUrl} alt="" className="w-[48px] h-[48px] rounded-full object-cover" />
+          ) : (
             <div className="w-[48px] h-[48px] rounded-full flex items-center justify-center text-[18px]" style={{ background: "rgba(255,255,255,0.06)" }}>
               ✦
             </div>
-          </StoryRing>
-          <span className="text-[9px] font-['Inter'] line-clamp-1" style={{ color: FEED_MUTED }}>Story</span>
+          )}
+        </StoryRing>
+        {ring.isLive && (
+          <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 text-[7px] font-bold uppercase text-white bg-red-600 rounded px-1 py-px leading-none whitespace-nowrap">
+            LIVE
+          </span>
+        )}
+      </div>
+      <span className={`text-[9px] font-['Inter'] text-center line-clamp-1 w-full ${ring.isLive ? "mt-2" : ""}`} style={{ color: FEED_TEXT }}>
+        {label}
+      </span>
+    </button>
+  );
+}
+
+export function StoriesRow({
+  storyRings,
+  featuredMehfil,
+  onOpenStory,
+  showLiveInStories = true,
+}: {
+  storyRings: StoryRingData[];
+  featuredMehfil?: Mehfil;
+  onOpenStory: (userId: string) => void;
+  showLiveInStories?: boolean;
+}) {
+  const { data: user } = useCurrentUser();
+  const [, navigate] = useLocation();
+  const me = user?.id;
+  const ownRing = storyRings.find((r) => r.userId === me);
+  const otherRings = storyRings.filter((r) => r.userId !== me).slice(0, 10);
+  const displayRings = showLiveInStories ? otherRings : otherRings.filter((r) => !r.isLive);
+
+  return (
+    <div className="px-4 pb-2 flex gap-3 overflow-x-auto no-scrollbar items-stretch">
+      <div className="flex flex-col items-center gap-1 shrink-0 w-[58px]">
+        <button
+          type="button"
+          onClick={() => (ownRing && me ? onOpenStory(me) : navigate("/stories/create"))}
+          className="relative"
+          aria-label={ownRing ? "View your story" : "Add story"}
+        >
+          {ownRing ? (
+            <StoryRing live={ownRing.isLive}>
+              <img src={user?.avatarUrl} alt="" className="w-[48px] h-[48px] rounded-full object-cover" />
+            </StoryRing>
+          ) : (
+            <div
+              className="w-[52px] h-[52px] rounded-full flex items-center justify-center border-2 border-dashed"
+              style={{ borderColor: FEED_BORDER, color: FEED_GOLD }}
+            >
+              <Plus size={22} strokeWidth={1.75} />
+            </div>
+          )}
+        </button>
+        <Link href="/stories/create" className="text-[9px] font-['Inter'] text-center leading-tight" style={{ color: FEED_MUTED }}>
+          Your Story
         </Link>
+        {ownRing && (
+          <Link href="/stories/create" className="text-[8px] font-['Inter']" style={{ color: FEED_GOLD }}>
+            + Add
+          </Link>
+        )}
+      </div>
+
+      {displayRings.map((ring) => (
+        <StoryAvatarButton key={ring.userId} ring={ring} onOpen={onOpenStory} />
       ))}
 
       {featuredMehfil && (
@@ -103,15 +135,14 @@ export function StoriesRow({
         </Link>
       )}
 
-      <button
-        type="button"
-        className="shrink-0 flex flex-col items-center justify-center gap-1 w-[72px] rounded-2xl border border-dashed px-2"
+      <Link
+        href="/discover"
+        className="shrink-0 flex flex-col items-center justify-center gap-1 w-[72px] rounded-2xl border border-dashed px-2 transition-opacity hover:opacity-90"
         style={{ borderColor: FEED_BORDER, color: FEED_GOLD }}
-        title="Discover more — coming soon"
       >
         <Sparkles size={18} />
         <span className="text-[8px] font-['Inter'] tracking-[0.06em] uppercase text-center leading-tight">Discover More</span>
-      </button>
+      </Link>
     </div>
   );
 }

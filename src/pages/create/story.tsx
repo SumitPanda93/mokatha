@@ -17,6 +17,8 @@ export default function CreateStory() {
   const [coverPreview, setCoverPreview] = useState<string | null>(null);
   const [uploadingCover, setUploadingCover] = useState(false);
   const [language, setLanguage] = useState<"or" | "hi">("or");
+  const [tipLock, setTipLock] = useState(false);
+  const [minTip, setMinTip] = useState(10);
   const [chapters, setChapters] = useState<Chapter[]>([{ id: "ch1", title: "ପ୍ରଥମ ଅଧ୍ୟାୟ", body: "" }]);
   const coverInputRef = useRef<HTMLInputElement>(null);
   const add = useAddPost();
@@ -31,9 +33,15 @@ export default function CreateStory() {
     if (!me) { toast.error("Please sign in to publish"); setLocation("/auth/login"); return; }
     const body = chapters.map((c) => `${c.title}\n\n${c.body}`).join("\n\n");
     add.mutate({
-      kind: "story", authorId: me, title: title.trim(), body,
-      coverUrl: coverUrl ?? "", language,
+      kind: "story",
+      authorId: me,
+      title: title.trim(),
+      body,
+      coverUrl: coverUrl ?? "",
+      language,
       tags: tags.split(",").map((s) => s.trim()).filter(Boolean),
+      accessType: tipLock ? "tip" : "free",
+      minTip: tipLock ? minTip : undefined,
     }, { onSuccess: () => { toast.success("Story published!"); setLocation("/"); } });
   };
 
@@ -69,7 +77,6 @@ export default function CreateStory() {
         <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Story title"
           className="w-full bg-transparent outline-none font-['Playfair_Display'] text-[28px] text-foreground placeholder:text-muted-foreground/50 mb-3 border-b border-border pb-2" />
 
-        {/* Cover — custom upload only */}
         <div className="mb-4">
           <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground mb-2">Cover (optional)</div>
           {coverPreview || coverUrl ? (
@@ -109,10 +116,10 @@ export default function CreateStory() {
             <div key={c.id} className="rounded-xl border border-border bg-card p-3">
               <div className="flex items-center gap-2 mb-2">
                 <div className="text-[10px] text-muted-foreground">{i + 1}</div>
-              <input value={c.title} onChange={(e) => update(c.id, { title: e.target.value })} className="flex-1 bg-transparent font-['Playfair_Display'] text-[16px] text-foreground outline-none" />
-              {chapters.length > 1 && <button onClick={() => removeChapter(c.id)} className="text-muted-foreground"><Trash2 size={14} /></button>}
-            </div>
-            <textarea value={c.body} onChange={(e) => update(c.id, { body: e.target.value })} placeholder="Chapter body…" rows={5} className="w-full bg-transparent outline-none text-[13.5px] text-foreground placeholder:text-muted-foreground leading-[1.7] resize-none" />
+                <input value={c.title} onChange={(e) => update(c.id, { title: e.target.value })} className="flex-1 bg-transparent font-['Playfair_Display'] text-[16px] text-foreground outline-none" />
+                {chapters.length > 1 && <button onClick={() => removeChapter(c.id)} className="text-muted-foreground"><Trash2 size={14} /></button>}
+              </div>
+              <textarea value={c.body} onChange={(e) => update(c.id, { body: e.target.value })} placeholder="Chapter body…" rows={5} className="w-full bg-transparent outline-none text-[13.5px] text-foreground placeholder:text-muted-foreground leading-[1.7] resize-none" />
             </div>
           ))}
         </div>
@@ -127,6 +134,17 @@ export default function CreateStory() {
             </button>
           ))}
         </div>
+        <label className="flex items-center gap-3 text-[13px] text-muted-foreground cursor-pointer select-none">
+          <input type="checkbox" checked={tipLock} onChange={(e) => setTipLock(e.target.checked)} className="rounded border-border" />
+          Tip to read (optional story lock)
+        </label>
+        {tipLock && (
+          <div className="flex items-center gap-2 text-[13px]">
+            <span className="text-muted-foreground">Min tip ₹</span>
+            <input type="number" min={10} max={5000} value={minTip} onChange={(e) => setMinTip(Number(e.target.value) || 10)}
+              className="w-24 bg-card border border-border rounded-xl px-3 py-2 outline-none focus:border-terracotta" />
+          </div>
+        )}
       </div>
 
       <div className="px-5 mt-7 mb-10">

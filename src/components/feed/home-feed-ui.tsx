@@ -10,8 +10,20 @@ export const FEED_CARD = "rgba(255,255,255,0.05)";
 export const FEED_PURPLE = "#9B59B6";
 export const FEED_PURPLE_SOFT = "rgba(155,89,182,0.35)";
 
-export const FEED_FILTERS = ["All", "Voice", "Text", "Mehfil"] as const;
+export const FEED_FILTERS = ["All", "Voice", "Text", "Reels", "Mehfil"] as const;
 export type FeedFilter = (typeof FEED_FILTERS)[number];
+
+export type FeedEditorialConfig = {
+  heroInterval: number;
+  mehfilInsertAt: number;
+  gapPx: number;
+};
+
+export const FEED_EDITORIAL_DEFAULTS: FeedEditorialConfig = {
+  heroInterval: 4,
+  mehfilInsertAt: 2,
+  gapPx: 12,
+};
 
 export function formatFeedStat(n: number): string {
   if (n >= 1000) {
@@ -42,6 +54,7 @@ export function filterPosts(posts: Post[], filter: FeedFilter): Post[] {
   if (filter === "All") return posts;
   if (filter === "Voice") return posts.filter((p) => p.kind === "voice");
   if (filter === "Text") return posts.filter((p) => p.kind === "text" || p.kind === "story");
+  if (filter === "Reels") return posts.filter((p) => p.kind === "reel");
   return posts.filter(isMehfilPost);
 }
 
@@ -49,21 +62,46 @@ export type FeedTile =
   | { kind: "post"; post: Post; size: "hero" | "tall" | "compact" }
   | { kind: "mehfil"; mehfil: Mehfil; size: "tall" };
 
+function editorialHero(sizeIndex: number, interval: number): "hero" | "compact" {
+  return sizeIndex > 0 && sizeIndex % interval === 0 ? "hero" : "compact";
+}
+
+export function feedEditorialFromAdmin(cfg?: {
+  feed_hero_interval?: number;
+  feed_masonry_gap_px?: number;
+  feed_mehfil_insert_at?: number;
+} | null): FeedEditorialConfig {
+  return {
+    heroInterval: cfg?.feed_hero_interval ?? FEED_EDITORIAL_DEFAULTS.heroInterval,
+    mehfilInsertAt: cfg?.feed_mehfil_insert_at ?? FEED_EDITORIAL_DEFAULTS.mehfilInsertAt,
+    gapPx: cfg?.feed_masonry_gap_px ?? FEED_EDITORIAL_DEFAULTS.gapPx,
+  };
+}
+
 export function buildFeedTiles(
   posts: Post[],
   _mehfils: Mehfil[],
   filter: FeedFilter,
   liveMehfil?: Mehfil,
+  editorial: FeedEditorialConfig = FEED_EDITORIAL_DEFAULTS,
 ): FeedTile[] {
   const filtered = filterPosts(posts, filter);
   const tiles: FeedTile[] = [];
-  const showLive = (filter === "All" || filter === "Mehfil") && liveMehfil;
+  const showLive = (filter === "All" || filter === "Mehfil") && liveMehfil && liveMehfil.isLive;
+  const { heroInterval, mehfilInsertAt } = editorial;
 
   if (filter === "Mehfil") {
-    if (liveMehfil) tiles.push({ kind: "mehfil", mehfil: liveMehfil, size: "tall" });
-    for (const p of filtered.slice(0, 10)) {
-      tiles.push({ kind: "post", post: p, size: tiles.length % 3 === 1 ? "hero" : "compact" });
-    }
+    if (liveMehfil?.isLive) tiles.push({ kind: "mehfil", mehfil: liveMehfil, size: "tall" });
+    filtered.forEach((p, i) => {
+      tiles.push({ kind: "post", post: p, size: i === 0 ? "hero" : editorialHero(i, heroInterval) });
+    });
+    return tiles;
+  }
+
+  if (filter === "Reels") {
+    filtered.forEach((p, i) => {
+      tiles.push({ kind: "post", post: p, size: i === 0 ? "tall" : "compact" });
+    });
     return tiles;
   }
 
@@ -73,19 +111,31 @@ export function buildFeedTiles(
   let insertedLive = false;
 
   for (const post of filtered) {
-    if (!insertedLive && showLive && tiles.length >= 1) {
+    if (!insertedLive && showLive && tiles.length >= mehfilInsertAt) {
       tiles.push({ kind: "mehfil", mehfil: liveMehfil!, size: "tall" });
       insertedLive = true;
     }
 
     if (post.kind === "voice") {
-      tiles.push({ kind: "post", post, size: voiceIdx === 0 ? "hero" : "compact" });
+      tiles.push({
+        kind: "post",
+        post,
+        size: voiceIdx === 0 ? "hero" : editorialHero(voiceIdx, heroInterval),
+      });
       voiceIdx++;
     } else if (post.kind === "text" || post.kind === "story") {
-      tiles.push({ kind: "post", post, size: textIdx === 0 ? "tall" : "compact" });
+      tiles.push({
+        kind: "post",
+        post,
+        size: textIdx === 0 ? "tall" : editorialHero(textIdx, heroInterval) === "hero" ? "hero" : "compact",
+      });
       textIdx++;
     } else {
-      tiles.push({ kind: "post", post, size: reelIdx === 0 ? "tall" : "compact" });
+      tiles.push({
+        kind: "post",
+        post,
+        size: reelIdx === 0 ? "tall" : "compact",
+      });
       reelIdx++;
     }
   }

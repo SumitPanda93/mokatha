@@ -1,10 +1,10 @@
 import { Link } from "wouter";
 import {
-  Play, Heart, MessageCircle, Lock, Mic, MoreHorizontal, BadgeCheck, PenLine,
+  Play, Heart, MessageCircle, Lock, Mic, MoreHorizontal, BadgeCheck, PenLine, Bookmark,
 } from "lucide-react";
 import { motion } from "framer-motion";
 import {
-  getCurrentUserId, Post, Mehfil, useUser, useLike, useIsPostUnlocked,
+  getCurrentUserId, Post, Mehfil, useUser, useLike, useIsPostUnlocked, useSavePost, useMehfilListeners,
 } from "@/lib/store";
 import {
   FEED_BG, FEED_BORDER, FEED_CARD, FEED_GOLD, FEED_MUTED, FEED_PURPLE, FEED_PURPLE_SOFT, FEED_TEXT,
@@ -23,6 +23,55 @@ function PostMenu() {
     <button type="button" className="w-7 h-7 rounded-full flex items-center justify-center" style={{ color: FEED_MUTED }} aria-label="More">
       <MoreHorizontal size={16} />
     </button>
+  );
+}
+
+function SaveButton({ post }: { post: Post }) {
+  const save = useSavePost();
+  const saved = post.saved ?? false;
+  return (
+    <motion.button
+      whileTap={{ scale: 0.9 }}
+      type="button"
+      onClick={() => save.mutate({ postId: post.id, on: !saved })}
+      className="flex items-center gap-1 text-[11px] font-['Inter']"
+      style={{ color: saved ? FEED_GOLD : FEED_MUTED }}
+      aria-label={saved ? "Remove bookmark" : "Save"}
+    >
+      <Bookmark size={12} fill={saved ? "currentColor" : "none"} />
+    </motion.button>
+  );
+}
+
+function ListenerAvatar({ userId }: { userId: string }) {
+  const { data: user } = useUser(userId);
+  if (!user?.avatarUrl) {
+    return (
+      <div className="w-6 h-6 rounded-full flex items-center justify-center text-[9px] border-2" style={{ borderColor: FEED_BG, background: "rgba(255,255,255,0.08)" }}>
+        ?
+      </div>
+    );
+  }
+  return <img src={user.avatarUrl} alt="" className="w-6 h-6 rounded-full object-cover border-2" style={{ borderColor: FEED_BG }} />;
+}
+
+function MehfilListenerStack({ mehfilId, hostId }: { mehfilId: string; hostId: string }) {
+  const { data: listenerIds = [] } = useMehfilListeners(mehfilId);
+  const ids = listenerIds.length > 0 ? listenerIds : [hostId];
+  const shown = ids.slice(0, 4);
+  const extra = Math.max(0, ids.length - shown.length);
+
+  return (
+    <div className="flex items-center gap-1.5 min-w-0">
+      <div className="flex -space-x-2">
+        {shown.map((id) => (
+          <ListenerAvatar key={id} userId={id} />
+        ))}
+      </div>
+      {extra > 0 && (
+        <span className="text-[9px] font-['Inter'] shrink-0" style={{ color: FEED_MUTED }}>+{extra}</span>
+      )}
+    </div>
   );
 }
 
@@ -48,7 +97,7 @@ export function FeedVoiceCard({
     <motion.article
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
-      className={`${cardBase} ${hero ? "col-span-2" : ""}`}
+      className={cardBase}
       style={cardStyle}
     >
       <Link href={`/post/${post.id}`} className={`relative block overflow-hidden ${hero ? "h-[220px]" : "h-[148px]"}`}>
@@ -120,6 +169,7 @@ export function FeedVoiceCard({
             <Link href={`/post/${post.id}`} className="flex items-center gap-1 text-[11px] font-['Inter']" style={{ color: FEED_MUTED }}>
               <MessageCircle size={13} />{post.comments}
             </Link>
+            <SaveButton post={post} />
             <div className="flex-1" />
             <span className="text-[9px] font-['Inter']" style={{ color: FEED_MUTED }}>{formatFeedTime(post.createdAt)}</span>
           </>
@@ -194,6 +244,7 @@ export function FeedTextCard({ post, size, onTip }: { post: Post; size: "hero" |
           <Link href={`/post/${post.id}`} className="flex items-center gap-1 text-[11px] font-['Inter']" style={{ color: FEED_MUTED }}>
             <MessageCircle size={12} />{post.comments}
           </Link>
+          <SaveButton post={post} />
           <div className="flex-1" />
           <button type="button" onClick={onTip} className="text-[10px] font-['Inter']" style={{ color: FEED_GOLD }}>
             Tip
@@ -234,6 +285,7 @@ export function FeedReelCard({ post, onTip }: { post: Post; onTip: () => void })
         <motion.button whileTap={{ scale: 0.9 }} type="button" onClick={() => like.mutate()} className="text-[10px] flex items-center gap-1" style={{ color: FEED_MUTED }}>
           <Heart size={11} />{post.likes}
         </motion.button>
+        <SaveButton post={post} />
         <button type="button" onClick={onTip} className="text-[10px] ml-auto" style={{ color: FEED_GOLD }}>Tip</button>
       </div>
     </motion.article>
@@ -270,11 +322,7 @@ export function FeedMehfilCard({ mehfil }: { mehfil: Mehfil }) {
             {formatFeedStat(mehfil.listeners)} listening
           </div>
           <div className="flex items-center justify-between gap-2">
-            <div className="flex -space-x-2">
-              {[host?.avatarUrl, mehfil.coverUrl].filter(Boolean).slice(0, 3).map((url, i) => (
-                <img key={i} src={url} alt="" className="w-6 h-6 rounded-full object-cover border-2" style={{ borderColor: FEED_BG }} />
-              ))}
-            </div>
+            <MehfilListenerStack mehfilId={mehfil.id} hostId={mehfil.hostId} />
             <span
               className="shrink-0 px-4 py-2 rounded-xl text-[11px] font-['Inter'] font-semibold text-white"
               style={{ background: `linear-gradient(135deg, ${FEED_PURPLE}, #7D3C98)` }}
@@ -282,6 +330,11 @@ export function FeedMehfilCard({ mehfil }: { mehfil: Mehfil }) {
               Join
             </span>
           </div>
+          {host?.displayName && (
+            <div className="text-[9px] font-['Inter'] mt-2 truncate" style={{ color: FEED_MUTED }}>
+              Hosted by {host.displayName}
+            </div>
+          )}
         </div>
       </Link>
     </motion.article>

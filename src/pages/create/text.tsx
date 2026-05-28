@@ -4,7 +4,7 @@ import { motion } from "framer-motion";
 import { ArrowLeft, Lock, Zap } from "lucide-react";
 import { useTitle } from "@/hooks/useTitle";
 import { useAddPost, getCurrentUserId } from "@/lib/store";
-import { consumeCreateDraft } from "@/lib/createDraft";
+import { consumeCreateDraft, type CreateDraft, type CreateVisibility } from "@/lib/createDraft";
 import { toast } from "sonner";
 
 const PAPERS = [
@@ -34,6 +34,8 @@ export default function CreateText() {
   const [accessType, setAccessType] = useState<AccessType>("free");
   const [minTip, setMinTip] = useState(10);
   const [isPrivate, setIsPrivate] = useState(false);
+  const [visibility, setVisibility] = useState<CreateVisibility>("public");
+  const [hubDraft, setHubDraft] = useState<CreateDraft | null>(null);
   const add = useAddPost();
 
   useEffect(() => {
@@ -44,6 +46,8 @@ export default function CreateText() {
     if (draft.accessType) setAccessType(draft.accessType === "tip" ? "tip" : "free");
     if (draft.minTip) setMinTip(draft.minTip);
     if (draft.isPrivate) setIsPrivate(true);
+    if (draft.visibility) setVisibility(draft.visibility);
+    setHubDraft(draft);
   }, []);
 
   const lines = body.split("\n").filter(Boolean).length;
@@ -55,11 +59,17 @@ export default function CreateText() {
     if (!me) { toast.error("Please sign in to publish"); setLocation("/auth/login"); return; }
     add.mutate({
       kind: "text", authorId: me, title: title.trim(), body,
-      coverUrl: undefined, language,
+      coverUrl: hubDraft?.coverUrl, language,
       tags: tags.split(",").map((s) => s.trim()).filter(Boolean),
       accessType,
       minTip: accessType === "tip" ? minTip : undefined,
-      isPrivate: isPrivate || undefined,
+      visibility: visibility ?? (isPrivate ? "private" : "public"),
+      isPrivate: visibility === "private" || isPrivate || undefined,
+      scheduledAt: hubDraft?.scheduledAt,
+      backgroundTheme: hubDraft?.backgroundTheme,
+      location: hubDraft?.location,
+      poll: hubDraft?.poll,
+      taggedUserIds: hubDraft?.taggedUserIds,
     }, { onSuccess: () => { toast.success("Poem published!"); setLocation("/"); } });
   };
 

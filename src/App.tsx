@@ -45,8 +45,11 @@ import SettingsNotifs from "@/pages/settings/notifications";
 import SettingsAbout from "@/pages/settings/about";
 import SettingsBlocked from "@/pages/settings/blocked";
 import SettingsMehfilPrefs from "@/pages/settings/mehfil-preferences";
+import SettingsFeedPrefs from "@/pages/settings/feed-preferences";
 import SettingsHelp from "@/pages/settings/help";
 import Messages from "@/pages/messages";
+import Discover from "@/pages/discover";
+import CreateStoryRing from "@/pages/stories/create";
 import Rewards from "@/pages/rewards";
 import CreatorPlan from "@/pages/creator-plan";
 import CreatorEarnings from "@/pages/creator-earnings";
@@ -121,7 +124,10 @@ const SettingsNotifsRoute  = withMobile(SettingsNotifs);
 const SettingsAboutRoute   = withMobile(SettingsAbout);
 const SettingsBlockedRoute = withMobile(SettingsBlocked);
 const SettingsMehfilPrefsRoute = withMobile(SettingsMehfilPrefs);
+const SettingsFeedPrefsRoute = withMobile(SettingsFeedPrefs);
 const SettingsHelpRoute    = withMobile(SettingsHelp);
+const DiscoverRoute        = withMobile(Discover);
+const CreateStoryRingRoute = withMobile(CreateStoryRing);
 const NotFoundRoute        = withMobile(NotFound);
 
 // Auth gate for the home route — renders Landing (no shell) for guests,
@@ -209,6 +215,8 @@ function Router() {
             <Route path="/create/text" component={CreateTextRoute} />
             <Route path="/create/story" component={CreateStoryRoute} />
             <Route path="/create/reel" component={CreateReelRoute} />
+            <Route path="/stories/create" component={CreateStoryRingRoute} />
+            <Route path="/discover" component={DiscoverRoute} />
 
             {/* Post */}
             <Route path="/post/:id/edit" component={PostEditRoute} />
@@ -248,6 +256,7 @@ function Router() {
             <Route path="/settings/about" component={SettingsAboutRoute} />
             <Route path="/settings/blocked" component={SettingsBlockedRoute} />
             <Route path="/settings/mehfil-preferences" component={SettingsMehfilPrefsRoute} />
+            <Route path="/settings/feed-preferences" component={SettingsFeedPrefsRoute} />
             <Route path="/settings/help" component={SettingsHelpRoute} />
 
             <Route component={NotFoundRoute} />

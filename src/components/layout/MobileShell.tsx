@@ -7,7 +7,7 @@ import {
 import { motion, AnimatePresence } from "framer-motion";
 import { useAudioPlayer } from "@/lib/audioContext";
 import { SHEET_SPRING } from "@/lib/motionTokens";
-import { useNotificationsRealtime, useUnreadCount } from "@/lib/store";
+import { useNotificationsRealtime, useUnreadMessageCount } from "@/lib/store";
 import { FEED_BG, FEED_BORDER, FEED_GOLD, FEED_MUTED } from "@/components/feed/home-feed-ui";
 
 const fmtTime = (s: number) =>
@@ -259,7 +259,7 @@ interface MobileShellProps { children: React.ReactNode }
 
 export default function MobileShell({ children }: MobileShellProps) {
   useNotificationsRealtime();
-  const { data: inboxBadge = 0 } = useUnreadCount();
+  const { data: inboxBadge = 0 } = useUnreadMessageCount();
   const [location, navigate] = useLocation();
   const [listeningMode, setListeningMode] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
