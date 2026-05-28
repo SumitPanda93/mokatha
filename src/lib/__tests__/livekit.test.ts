@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { Track } from "livekit-client";
 import type { Room } from "livekit-client";
-import { verifyHostPublish } from "@/lib/livekit";
+import { verifyHostPublish, isVideoElementPlaying, isHostCameraPublication } from "@/lib/livekit";
 
 type MockPub = { kind: Track.Kind; track: object | null; isMuted: boolean; unmute?: () => Promise<void> };
 
@@ -23,6 +23,80 @@ function mockRoom(pubs: MockPub[]): Room {
     },
   } as unknown as Room;
 }
+
+describe("isHostCameraPublication", () => {
+  const liveTrack = { mediaStreamTrack: { readyState: "live", enabled: true } as MediaStreamTrack };
+
+  it("returns false for muted, unsubscribed, or non-camera publications", () => {
+    expect(
+      isHostCameraPublication({
+        kind: Track.Kind.Video,
+        source: Track.Source.Camera,
+        isMuted: true,
+        isSubscribed: true,
+        track: liveTrack,
+      }),
+    ).toBe(false);
+    expect(
+      isHostCameraPublication({
+        kind: Track.Kind.Video,
+        source: Track.Source.Camera,
+        isMuted: false,
+        isSubscribed: false,
+        track: liveTrack,
+      }),
+    ).toBe(false);
+    expect(
+      isHostCameraPublication({
+        kind: Track.Kind.Video,
+        source: Track.Source.ScreenShare,
+        isMuted: false,
+        isSubscribed: true,
+        track: liveTrack,
+      }),
+    ).toBe(false);
+  });
+
+  it("returns true for subscribed unmuted camera with live media track", () => {
+    expect(
+      isHostCameraPublication({
+        kind: Track.Kind.Video,
+        source: Track.Source.Camera,
+        isMuted: false,
+        isSubscribed: true,
+        track: liveTrack,
+      }),
+    ).toBe(true);
+  });
+});
+
+describe("isVideoElementPlaying", () => {
+  it("returns false for null or detached elements", () => {
+    expect(isVideoElementPlaying(null)).toBe(false);
+    const v = document.createElement("video");
+    expect(isVideoElementPlaying(v)).toBe(false);
+  });
+
+  it("returns true when video has current data and is playing", () => {
+    const v = document.createElement("video");
+    document.body.appendChild(v);
+    Object.defineProperty(v, "readyState", { value: HTMLMediaElement.HAVE_CURRENT_DATA, configurable: true });
+    Object.defineProperty(v, "paused", { value: false, configurable: true });
+    v.srcObject = {} as MediaStream;
+    expect(isVideoElementPlaying(v)).toBe(true);
+    v.remove();
+  });
+
+  it("returns true when paused but buffered to future data", () => {
+    const v = document.createElement("video");
+    document.body.appendChild(v);
+    Object.defineProperty(v, "readyState", { value: HTMLMediaElement.HAVE_FUTURE_DATA, configurable: true });
+    Object.defineProperty(v, "paused", { value: true, configurable: true });
+    v.srcObject = {} as MediaStream;
+    expect(isVideoElementPlaying(v)).toBe(true);
+    v.remove();
+  });
+});
 
 describe("verifyHostPublish", () => {
   afterEach(() => {
@@ -98,18 +172,42 @@ describe("verifyHostPublish", () => {
 });
 
 describe("isLiveKitConfigured", () => {
-  it("returns true when VITE_LIVEKIT_URL is set", async () => {
+  it("returns true when LiveKit and Supabase env vars are set", async () => {
     vi.stubEnv("VITE_LIVEKIT_URL", "wss://test.livekit.cloud");
+    vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_ANON_KEY", "test-anon-key");
     vi.resetModules();
-    const { isLiveKitConfigured } = await import("@/lib/livekit");
+    const { isLiveKitConfigured, getLiveKitConfigError } = await import("@/lib/livekit");
     expect(isLiveKitConfigured()).toBe(true);
+    expect(getLiveKitConfigError()).toBeNull();
   });
 
   it("returns false when VITE_LIVEKIT_URL is missing", async () => {
     vi.stubEnv("VITE_LIVEKIT_URL", "");
+    vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_ANON_KEY", "test-anon-key");
     vi.resetModules();
     const { isLiveKitConfigured } = await import("@/lib/livekit");
     expect(isLiveKitConfigured()).toBe(false);
+  });
+
+  it("returns false when VITE_LIVEKIT_URL is whitespace only", async () => {
+    vi.stubEnv("VITE_LIVEKIT_URL", "   ");
+    vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_ANON_KEY", "test-anon-key");
+    vi.resetModules();
+    const { isLiveKitConfigured } = await import("@/lib/livekit");
+    expect(isLiveKitConfigured()).toBe(false);
+  });
+
+  it("returns false when URL is not wss", async () => {
+    vi.stubEnv("VITE_LIVEKIT_URL", "https://test.livekit.cloud");
+    vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_ANON_KEY", "test-anon-key");
+    vi.resetModules();
+    const { isLiveKitConfigured, getLiveKitConfigError } = await import("@/lib/livekit");
+    expect(isLiveKitConfigured()).toBe(false);
+    expect(getLiveKitConfigError()).toMatch(/wss:\/\//);
   });
 });
 
@@ -117,6 +215,7 @@ describe("connectToMehfil (mocked)", () => {
   it("returns null and calls onError when LiveKit URL is not configured", async () => {
     vi.stubEnv("VITE_LIVEKIT_URL", "");
     vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_ANON_KEY", "test-anon-key");
     vi.resetModules();
 
     const onError = vi.fn();
@@ -126,5 +225,16 @@ describe("connectToMehfil (mocked)", () => {
     expect(onError).toHaveBeenCalledWith(
       expect.objectContaining({ message: expect.stringContaining("VITE_LIVEKIT_URL") }),
     );
+  });
+});
+
+describe("getLiveKitConfigError", () => {
+  it("reports missing Supabase anon key", async () => {
+    vi.stubEnv("VITE_LIVEKIT_URL", "wss://test.livekit.cloud");
+    vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_ANON_KEY", "");
+    vi.resetModules();
+    const { getLiveKitConfigError } = await import("@/lib/livekit");
+    expect(getLiveKitConfigError()).toMatch(/VITE_SUPABASE_ANON_KEY/);
   });
 });

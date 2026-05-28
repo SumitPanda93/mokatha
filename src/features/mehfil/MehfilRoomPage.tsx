@@ -33,10 +33,11 @@ import {
   Mic, MicOff, Send, Hand, Settings, X, CheckCircle, XCircle, Radio, Users,
   UserPlus, Video, VideoOff, Coffee,
 } from "lucide-react";
-import { isLiveKitConfigured } from "@/lib/livekit";
+import { isLiveKitConfigured, isVideoElementPlaying } from "@/lib/livekit";
 import { OVERLAY_FADE, PAGE_ENTER, SHEET_SPRING } from "@/lib/motionTokens";
 import {
   useMehfilRoomSession,
+  formatLiveKitConnectError,
   type PresencePayload,
   type ChatMsg,
 } from "@/features/mehfil/useMehfilRoomSession";
@@ -317,25 +318,26 @@ export default function MehfilRoomPage() {
     const tick = () => {
       const v = (localVidRef.current?.querySelector("video:not([data-preflight])")
         ?? localVidRef.current?.querySelector("video")) as HTMLVideoElement | null;
-      if (v && v.readyState >= 2) session.setLocalVideoPlaying(true);
+      session.setLocalVideoPlaying(Boolean(v && v.readyState >= 2 && (!v.paused || v.readyState >= 3)));
     };
     tick();
     const id = window.setInterval(tick, 600);
     return () => clearInterval(id);
-  }, [session.joined, session.studio, session.isHost, session.lkRoomReady, session.setLocalVideoPlaying]);
+  }, [session.joined, session.studio, session.isHost, session.lkRoomReady, session.hostCameraOn, session.setLocalVideoPlaying]);
 
   useEffect(() => {
     if (!session.joined || !session.studio || session.isHost) return;
     const tick = () => {
       const v = remoteVidRef.current?.querySelector("video") as HTMLVideoElement | null;
-      if (v && v.readyState >= 2 && (!v.paused || v.readyState >= 3)) {
-        session.setRemoteVideoPlaying(true);
+      if (v?.srcObject && v.paused) {
+        void v.play().catch(() => {});
       }
+      session.setRemoteVideoPlaying(isVideoElementPlaying(v));
     };
     tick();
     const id = window.setInterval(tick, 600);
     return () => clearInterval(id);
-  }, [session.joined, session.studio, session.isHost, session.lkRoomReady, session.lkConnected, session.setRemoteVideoPlaying]);
+  }, [session.joined, session.studio, session.isHost, session.lkRoomReady, session.lkConnected, session.remoteHostVideoAvailable, session.setRemoteVideoPlaying]);
 
   useEffect(() => {
     if (!session.joined || !session.studio) return;
@@ -366,6 +368,7 @@ export default function MehfilRoomPage() {
     session.studio,
     session.hostCameraOn,
     session.isHost,
+    session.remoteHostVideoAvailable,
   ]);
 
   const raiseHandMut = useRaiseHand();
@@ -429,6 +432,29 @@ export default function MehfilRoomPage() {
   }
 
   if (!session.joined && mehfil.isLive && !session.roomEnded) {
+    const joinFailure =
+      session.joinError ??
+      (session.lkConnectionFailed ? session.mediaFailure?.remote : null);
+    if (joinFailure) {
+      return (
+        <div className="min-h-[100dvh] flex flex-col items-center justify-center px-8 gap-5 font-['Inter'] text-center" style={{ background: BG, color: FG }}>
+          <p className="text-[13px] leading-relaxed max-w-sm" style={{ color: "rgba(245,243,239,0.55)" }}>
+            {formatLiveKitConnectError(joinFailure)}
+          </p>
+          <button
+            type="button"
+            onClick={() => void session.joinRoom()}
+            className="px-8 py-3 rounded-full text-[14px] font-medium border border-white/[0.14]"
+            style={{ background: `linear-gradient(135deg,${GOLD},#e08055)`, color: BG }}
+          >
+            Try again
+          </button>
+          <button type="button" onClick={navigateOut} className="text-[13px]" style={{ color: "rgba(245,243,239,0.4)" }}>
+            ← Back
+          </button>
+        </div>
+      );
+    }
     return (
       <div className="min-h-[100dvh] flex flex-col items-center justify-center px-8 gap-5 font-['Inter']" style={{ background: BG, color: FG }}>
         <motion.div
@@ -569,6 +595,7 @@ export default function MehfilRoomPage() {
               session.livekitRef.current?.enableAudio();
               session.livekitRef.current?.primeRemotePlayback("tap_unblock");
               session.setAudioBlocked(false);
+              session.resetListenerVideoWait();
             }}
             className="relative z-40 mx-4 mt-3 py-2.5 rounded-full text-[12px] font-medium border border-white/10 bg-white/[0.06]">
             Tap to hear the room
@@ -588,7 +615,9 @@ export default function MehfilRoomPage() {
               ? "Live audio is not configured. Set VITE_LIVEKIT_URL in .env.local and restart the dev server."
               : session.mediaFailure?.remote === "livekit_not_configured"
                 ? "Live audio is not configured for this environment."
-                : session.mediaFailure?.mic ?? session.mediaFailure?.remote ?? "Could not connect to live audio."}
+                : session.mediaFailure?.mic ??
+                  formatLiveKitConnectError(session.mediaFailure?.remote) ??
+                  "Could not connect to live audio."}
           </motion.div>
         )}
         {!session.audioBlocked && !session.lkConnectionFailed && session.lkConnecting && (
@@ -689,9 +718,13 @@ export default function MehfilRoomPage() {
               transition={{ duration: livePulse ? 2.8 : 4, repeat: Infinity, ease: "easeInOut" }}
             />
             <motion.div className="relative mx-auto w-full aspect-[9/16] max-h-[48vh] rounded-[30px] overflow-hidden ring-1 ring-white/12 shadow-[0_42px_120px_rgba(0,0,0,0.72)] bg-[#120e14]">
+              <div className="pointer-events-none absolute inset-0 z-0 bg-gradient-to-b from-[#1c1420] via-[#0f0a12] to-black" aria-hidden />
               {(host?.avatarUrl || mehfil.coverUrl) &&
               ((session.isHost && !session.localVideoPlaying && session.hostCameraOn) ||
-                (!session.isHost && !session.remoteVideoPlaying && session.remoteHostVideoAvailable)) ? (
+                (!session.isHost &&
+                  !session.remoteVideoPlaying &&
+                  session.remoteHostVideoAvailable &&
+                  !session.listenerVideoWaitExpired)) ? (
                 <div
                   className="pointer-events-none absolute inset-0 z-0 scale-[1.08]"
                   style={{
@@ -699,19 +732,11 @@ export default function MehfilRoomPage() {
                     backgroundSize: "cover",
                     backgroundPosition: "center",
                     filter: "blur(36px) saturate(1.12)",
-                    opacity:
-                      (session.isHost && !session.localVideoPlaying && session.hostCameraOn) ||
-                      (!session.isHost && !session.remoteVideoPlaying && session.remoteHostVideoAvailable)
-                        ? session.isHost
-                          ? 0.55
-                          : 0.5
-                        : 0,
+                    opacity: session.isHost ? 0.55 : 0.5,
                   }}
                   aria-hidden
                 />
-              ) : (
-                <div className="pointer-events-none absolute inset-0 z-0 bg-gradient-to-b from-[#1c1420] via-[#0f0a12] to-black" aria-hidden />
-              )}
+              ) : null}
               <div className="pointer-events-none absolute inset-0 z-[1] bg-gradient-to-t from-black/50 via-transparent to-black/20" aria-hidden />
               {session.isHost ? (
                 <>
@@ -736,6 +761,21 @@ export default function MehfilRoomPage() {
                       <div className="w-8 h-8 rounded-full border-2 border-t-transparent animate-spin" style={{ borderColor: `${GOLD}66`, borderTopColor: "transparent" }} />
                     </div>
                   )}
+                  {session.hostCameraOn && !session.localVideoPlaying && !session.mediaFailure?.camera && session.mediaPhase !== "publishing" && (
+                    <div className="absolute inset-0 z-[4] flex flex-col items-center justify-center gap-3 px-6 text-center bg-black/55">
+                      <Video size={24} className="opacity-50" style={{ color: GOLD }} />
+                      <p className="text-[13px] leading-relaxed" style={{ color: "rgba(245,243,239,0.65)" }}>
+                        Starting camera…
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => void session.retryHostPublish()}
+                        className="px-5 py-2 rounded-full text-[12px] border border-white/15 bg-white/[0.06]"
+                      >
+                        Retry
+                      </button>
+                    </div>
+                  )}
                   {!session.hostCameraOn && (
                     <div className="absolute inset-0 z-[3] flex flex-col items-center justify-center gap-4 bg-gradient-to-t from-black/72 via-black/35 to-transparent">
                       {(host?.avatarUrl || mehfil.coverUrl) ? (
@@ -752,7 +792,9 @@ export default function MehfilRoomPage() {
               ) : (
                 <>
                   <motion.div ref={remoteVidRef} className="absolute inset-0 z-[2] w-full h-full" />
-                  {!session.remoteVideoPlaying && session.remoteHostVideoAvailable && (
+                  {!session.remoteVideoPlaying &&
+                    session.remoteHostVideoAvailable &&
+                    !session.listenerVideoWaitExpired && (
                     <div className="absolute inset-0 z-[4] flex flex-col items-center justify-center gap-3 px-6 text-center bg-black/72">
                       <Video size={24} className="opacity-50" style={{ color: GOLD }} />
                       <p className="text-[13px] leading-relaxed" style={{ color: "rgba(245,243,239,0.65)" }}>
@@ -767,7 +809,8 @@ export default function MehfilRoomPage() {
                       </button>
                     </div>
                   )}
-                  {!session.remoteVideoPlaying && !session.remoteHostVideoAvailable && (
+                  {!session.remoteVideoPlaying &&
+                    (!session.remoteHostVideoAvailable || session.listenerVideoWaitExpired) && (
                     <div className="absolute inset-0 z-[3] flex flex-col items-center justify-center gap-4 bg-gradient-to-t from-black/72 via-black/35 to-transparent">
                       {(host?.avatarUrl || mehfil.coverUrl) ? (
                         <img src={host?.avatarUrl || mehfil.coverUrl} alt="" className="w-[76px] h-[76px] rounded-full object-cover ring-2 ring-[rgba(201,168,76,0.35)] shadow-[0_0_40px_rgba(201,168,76,0.22)] opacity-92" />
@@ -776,7 +819,11 @@ export default function MehfilRoomPage() {
                           {(host?.displayName ?? mehfil.title).charAt(0)}
                         </div>
                       )}
-                      <p className="text-[10px] font-['Inter'] uppercase tracking-[0.28em]" style={{ color: "rgba(245,243,239,0.38)" }}>Voice only · listening</p>
+                      <p className="text-[10px] font-['Inter'] uppercase tracking-[0.28em] text-center px-4" style={{ color: "rgba(245,243,239,0.38)" }}>
+                        {session.listenerVideoWaitExpired
+                          ? "Host may have camera off · voice only"
+                          : "Voice only · listening"}
+                      </p>
                     </div>
                   )}
                 </>

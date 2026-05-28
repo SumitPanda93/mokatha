@@ -15,7 +15,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
 serve(async (req: Request) => {
@@ -36,8 +36,14 @@ serve(async (req: Request) => {
       });
     }
 
-    // Optional: verify caller is authenticated with Supabase
+    // Verify caller when a user JWT is supplied (anon key alone is allowed for token bootstrap)
     const authHeader = req.headers.get("Authorization");
+    if (authHeader && !authHeader.startsWith("Bearer ")) {
+      return new Response(JSON.stringify({ error: "Invalid Authorization header" }), {
+        status: 401,
+        headers: { "Content-Type": "application/json", ...CORS },
+      });
+    }
     if (authHeader) {
       const supabase = createClient(
         Deno.env.get("SUPABASE_URL") ?? "",

@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   presenceRoleFor,
   evaluateJoinCycleGuard,
+  formatLiveKitConnectError,
 } from "@/features/mehfil/useMehfilRoomSession";
 
 describe("presenceRoleFor", () => {
@@ -31,5 +32,21 @@ describe("evaluateJoinCycleGuard", () => {
   it("allows fresh join when cycle not started", () => {
     expect(evaluateJoinCycleGuard(false, false)).toEqual({ block: false, resetStarted: false });
     expect(evaluateJoinCycleGuard(false, true)).toEqual({ block: false, resetStarted: false });
+  });
+});
+
+describe("formatLiveKitConnectError", () => {
+  it("maps livekit_timeout to a friendly studio message", () => {
+    expect(formatLiveKitConnectError("livekit_timeout")).toContain("timed out");
+    expect(formatLiveKitConnectError("livekit_timeout")).not.toBe("livekit_timeout");
+  });
+
+  it("preserves token fetch errors", () => {
+    const msg = "Token fetch failed (401): Not signed in";
+    expect(formatLiveKitConnectError(msg)).toBe(msg);
+  });
+
+  it("maps connect failures to actionable copy", () => {
+    expect(formatLiveKitConnectError("livekit_connect_failed")).toContain("live audio");
   });
 });
