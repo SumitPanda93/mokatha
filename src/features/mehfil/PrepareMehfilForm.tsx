@@ -12,9 +12,13 @@ import {
   saveMehfilCreateDraft,
   readMehfilCreateDraft,
   clearMehfilCreateDraft,
+  type MehfilCreateDraft,
   type MehfilEntryType,
 } from "@/lib/mehfilCreateDraft";
+import { deleteMehfilDraft, saveMehfilDraft } from "@/lib/mehfilDrafts";
+import { validateMehfilCoverFile } from "@/lib/mehfilCoverValidation";
 import type { Mehfil } from "@/lib/store";
+import MehfilDraftsSheet from "@/components/mehfil/MehfilDraftsSheet";
 import {
   CreateMehfilShell,
   CreateMehfilHeader,
@@ -26,9 +30,8 @@ import {
   SettingsStep,
   ReviewStep,
   MEHFIL_DEFAULT_COVER,
-  MEHFIL_COVER_MAX_MB,
   MEHFIL_TITLE_MAX,
-  CATEGORY_TO_TAG,
+  MEHFIL_MAX_SPEAKERS_DEFAULT,
   type MehfilCategoryId,
 } from "@/components/mehfil/create-mehfil-ui";
 import { toast } from "sonner";
@@ -40,10 +43,8 @@ function defaultStartsAt(): string {
   return d.toISOString().slice(0, 16);
 }
 
-function buildTags(category: MehfilCategoryId, selectedTags: string[]): string[] {
-  const catTag = CATEGORY_TO_TAG[category];
-  const merged = [catTag, ...selectedTags.filter((t) => t !== catTag)];
-  return [...new Set(merged)];
+function normalizeHighlights(highlights: string[]): string[] {
+  return highlights.map((h) => h.trim()).filter(Boolean).slice(0, 3);
 }
 
 export function PrepareMehfilForm() {
@@ -62,7 +63,9 @@ export function PrepareMehfilForm() {
   const [coverPreview, setCoverPreview] = useState<string | null>(null);
   const [coverUploading, setCoverUploading] = useState(false);
   const [entryType, setEntryType] = useState<MehfilEntryType>("free");
+  const [ticketPrice, setTicketPrice] = useState(0);
   const [highlights, setHighlights] = useState<string[]>([]);
+  const [maxSpeakers, setMaxSpeakers] = useState(MEHFIL_MAX_SPEAKERS_DEFAULT);
   const [language, setLanguage] = useState<"or" | "hi">("or");
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [sessionMode, setSessionMode] = useState<"voice" | "studio">("voice");
@@ -70,8 +73,10 @@ export function PrepareMehfilForm() {
   const [startsAt, setStartsAt] = useState(defaultStartsAt);
   const [preflightMehfil, setPreflightMehfil] = useState<{ id: string; title: string } | null>(null);
   const [savingDraft, setSavingDraft] = useState(false);
+  const [draftsOpen, setDraftsOpen] = useState(false);
+  const [serverDraftId, setServerDraftId] = useState<string | undefined>();
 
-  const applyDraft = useCallback((draft: ReturnType<typeof readMehfilCreateDraft>) => {
+  const applyDraft = useCallback((draft: MehfilCreateDraft | null) => {
     if (!draft) return;
     if (draft.step != null) setStep(Math.min(draft.step, STEPS - 1));
     if (draft.title) setTitle(draft.title);
@@ -81,12 +86,15 @@ export function PrepareMehfilForm() {
     if (draft.coverPreview) setCoverPreview(draft.coverPreview);
     else if (draft.coverUrl) setCoverPreview(draft.coverUrl);
     if (draft.entryType) setEntryType(draft.entryType);
+    if (draft.ticketPrice != null) setTicketPrice(draft.ticketPrice);
     if (draft.highlights) setHighlights(draft.highlights);
+    if (draft.maxSpeakers != null) setMaxSpeakers(draft.maxSpeakers);
     if (draft.language) setLanguage(draft.language);
     if (draft.sessionMode) setSessionMode(draft.sessionMode);
     if (draft.selectedTags) setSelectedTags(draft.selectedTags);
     if (draft.startsNow != null) setStartsNow(draft.startsNow);
     if (draft.startsAt) setStartsAt(draft.startsAt);
+    if (draft.serverDraftId) setServerDraftId(draft.serverDraftId);
   }, []);
 
   useEffect(() => {
@@ -104,7 +112,7 @@ export function PrepareMehfilForm() {
   }, [applyDraft]);
 
   const snapshotDraft = useCallback(
-    () => ({
+    (): MehfilCreateDraft => ({
       step,
       title,
       description,
@@ -112,12 +120,15 @@ export function PrepareMehfilForm() {
       coverUrl: coverUrl ?? undefined,
       coverPreview: coverPreview ?? undefined,
       entryType,
+      ticketPrice,
       highlights,
+      maxSpeakers,
       language,
       sessionMode,
       selectedTags,
       startsNow,
       startsAt,
+      serverDraftId,
     }),
     [
       step,
@@ -127,24 +138,36 @@ export function PrepareMehfilForm() {
       coverUrl,
       coverPreview,
       entryType,
+      ticketPrice,
       highlights,
+      maxSpeakers,
       language,
       sessionMode,
       selectedTags,
       startsNow,
       startsAt,
+      serverDraftId,
     ],
   );
 
-  const handleSaveDraft = () => {
+  const handleSaveDraft = async () => {
     if (!me) {
       toast.error("Sign in to save drafts");
       return;
     }
     setSavingDraft(true);
-    saveMehfilCreateDraft(snapshotDraft());
-    setSavingDraft(false);
-    toast.success("Draft saved");
+    const draft = snapshotDraft();
+    saveMehfilCreateDraft(draft);
+    try {
+      const saved = await saveMehfilDraft(draft, serverDraftId, title.trim() || undefined);
+      setServerDraftId(saved.id);
+      toast.success("Draft saved");
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Could not save draft to server");
+      toast.message("Draft kept locally for this session");
+    } finally {
+      setSavingDraft(false);
+    }
   };
 
   const toggleMood = (tag: string) => {
@@ -162,16 +185,14 @@ export function PrepareMehfilForm() {
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
-    if (!file.type.startsWith("image/")) {
-      toast.error("Please choose an image file");
-      return;
-    }
-    if (file.size > MEHFIL_COVER_MAX_MB * 1024 * 1024) {
-      toast.error(`Image must be under ${MEHFIL_COVER_MAX_MB}MB`);
-      return;
-    }
     if (!me) {
       toast.error("Sign in to upload a cover");
+      return;
+    }
+
+    const validation = await validateMehfilCoverFile(file);
+    if (validation.ok === false) {
+      toast.error(validation.message);
       return;
     }
 
@@ -179,17 +200,6 @@ export function PrepareMehfilForm() {
     setCoverPreview(localUrl);
     setCoverUploading(true);
     try {
-      const img = await new Promise<HTMLImageElement>((resolve, reject) => {
-        const el = new Image();
-        el.onload = () => resolve(el);
-        el.onerror = () => reject(new Error("Could not read image"));
-        el.src = localUrl;
-      });
-      const ratio = img.naturalWidth / img.naturalHeight;
-      const target = 16 / 9;
-      if (Math.abs(ratio - target) > 0.08) {
-        toast.message("Tip: 16:9 images look best as cover art");
-      }
       const url = await uploadPostCoverImage(me, file);
       setCoverUrl(url);
       setCoverPreview(url);
@@ -205,13 +215,22 @@ export function PrepareMehfilForm() {
   };
 
   const canContinue = (): boolean => {
-    if (step === 0) return title.trim().length > 0;
+    if (step === 0) {
+      if (!title.trim()) return false;
+      if (entryType === "ticket" && ticketPrice <= 0) return false;
+      return true;
+    }
     if (step === 1 && !startsNow) return !!startsAt;
     return true;
   };
 
   const handleContinue = () => {
-    if (!canContinue()) return;
+    if (!canContinue()) {
+      if (step === 0 && entryType === "ticket" && ticketPrice <= 0) {
+        toast.error("Set a ticket price greater than ₹0");
+      }
+      return;
+    }
     if (step < STEPS - 1) {
       setStep((s) => s + 1);
       return;
@@ -234,21 +253,38 @@ export function PrepareMehfilForm() {
       setLocation("/auth/login");
       return;
     }
+    if (entryType === "ticket" && ticketPrice <= 0) {
+      toast.error("Set a ticket price greater than ₹0");
+      return;
+    }
+
+    const isTicketed = entryType === "ticket";
     const payload: Omit<Mehfil, "id" | "listeners" | "isLive"> = {
       hostId: me,
       title: title.trim(),
       description,
       coverUrl: coverUrl || MEHFIL_DEFAULT_COVER,
       language,
-      tags: buildTags(category, selectedTags),
+      category,
+      highlights: normalizeHighlights(highlights),
+      entryType,
+      tags: [...new Set(selectedTags)],
       startsAt: startsNow ? new Date().toISOString() : new Date(startsAt).toISOString(),
       sessionMode,
-      isTicketed: false,
-      ticketPrice: 0,
+      isTicketed,
+      ticketPrice: isTicketed ? ticketPrice : 0,
+      maxSpeakers,
     };
     create.mutate(payload, {
-      onSuccess: (m) => {
+      onSuccess: async (m) => {
         clearMehfilCreateDraft();
+        if (serverDraftId) {
+          try {
+            await deleteMehfilDraft(serverDraftId);
+          } catch {
+            /* non-blocking */
+          }
+        }
         toast.success("Mehfil created");
         if (sessionMode === "studio") {
           setPreflightMehfil({ id: m.id, title: m.title });
@@ -285,7 +321,12 @@ export function PrepareMehfilForm() {
         }}
         className="min-h-[100dvh] flex flex-col pb-[max(6rem,env(safe-area-inset-bottom))]"
       >
-        <CreateMehfilHeader onBack={handleBack} onSaveDraft={handleSaveDraft} savingDraft={savingDraft} />
+        <CreateMehfilHeader
+          onBack={handleBack}
+          onSaveDraft={handleSaveDraft}
+          onOpenDrafts={me ? () => setDraftsOpen(true) : undefined}
+          savingDraft={savingDraft}
+        />
         <CreateMehfilHero />
         <CreateMehfilStepper activeIndex={step} />
 
@@ -303,6 +344,8 @@ export function PrepareMehfilForm() {
               onCoverSelect={() => coverInputRef.current?.click()}
               entryType={entryType}
               onEntryTypeChange={setEntryType}
+              ticketPrice={ticketPrice}
+              onTicketPriceChange={setTicketPrice}
               highlights={highlights}
               onHighlightsChange={setHighlights}
             />
@@ -323,6 +366,8 @@ export function PrepareMehfilForm() {
               onLanguageChange={setLanguage}
               selectedTags={selectedTags}
               onToggleTag={toggleMood}
+              maxSpeakers={maxSpeakers}
+              onMaxSpeakersChange={setMaxSpeakers}
             />
           )}
           {step === 3 && (
@@ -332,12 +377,14 @@ export function PrepareMehfilForm() {
               category={category}
               coverPreview={coverPreview}
               entryType={entryType}
+              ticketPrice={ticketPrice}
               highlights={highlights}
               startsNow={startsNow}
               startsAt={startsAt}
               sessionMode={sessionMode}
               language={language}
               selectedTags={selectedTags}
+              maxSpeakers={maxSpeakers}
             />
           )}
         </div>
@@ -358,6 +405,14 @@ export function PrepareMehfilForm() {
           onClick={step < STEPS - 1 ? handleContinue : undefined}
         />
       </form>
+
+      <MehfilDraftsSheet
+        open={draftsOpen}
+        onOpenChange={setDraftsOpen}
+        onLoad={applyDraft}
+        onSaveCurrent={handleSaveDraft}
+        saving={savingDraft}
+      />
     </CreateMehfilShell>
   );
 }

@@ -1,20 +1,26 @@
-/** Session-scoped draft for multi-step mehfil creation (not persisted to Supabase). */
-export type MehfilEntryType = "free" | "tip";
+/** Session-scoped draft for multi-step mehfil creation; also stored in mehfil_drafts when saved. */
+export type MehfilEntryType = "free" | "tip" | "ticket";
+
+export type MehfilCategoryId = "music" | "spiritual" | "talks" | "open-mic";
 
 export type MehfilCreateDraft = {
   step?: number;
   title?: string;
   description?: string;
-  category?: "music" | "spiritual" | "talks" | "open-mic";
+  category?: MehfilCategoryId;
   coverUrl?: string;
   coverPreview?: string;
   entryType?: MehfilEntryType;
+  ticketPrice?: number;
   highlights?: string[];
+  maxSpeakers?: number;
   language?: "or" | "hi";
   sessionMode?: "voice" | "studio";
   selectedTags?: string[];
   startsNow?: boolean;
   startsAt?: string;
+  /** Server draft row id when loaded from mehfil_drafts */
+  serverDraftId?: string;
 };
 
 const DRAFT_KEY = "mk-mehfil-create-draft";

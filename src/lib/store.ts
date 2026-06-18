@@ -97,6 +97,10 @@ export type Comment = {
   likes: number;
 };
 
+export type MehfilEntryType = "free" | "tip" | "ticket";
+
+export type MehfilCategoryId = "music" | "spiritual" | "talks" | "open-mic";
+
 export type Mehfil = {
   id: string;
   hostId: string;
@@ -108,6 +112,9 @@ export type Mehfil = {
   coverUrl: string;
   language: "or" | "hi";
   tags: string[];
+  category?: MehfilCategoryId;
+  highlights?: string[];
+  entryType?: MehfilEntryType;
   archived?: boolean;
   /** When the live session ended (public discovery hides ~24h after this). */
   endedAt?: string;
@@ -321,6 +328,7 @@ function mapComment(c: any): Comment {
 
 function mapMehfil(m: any): Mehfil {
   const mode = m.session_mode === "studio" ? "studio" : "voice";
+  const entryType = m.entry_type === "tip" || m.entry_type === "ticket" ? m.entry_type : "free";
   return {
     id: m.id,
     hostId: m.host_id,
@@ -332,11 +340,14 @@ function mapMehfil(m: any): Mehfil {
     coverUrl: m.cover_url ?? "",
     language: m.language ?? "or",
     tags: m.tags ?? [],
+    category: m.category ?? undefined,
+    highlights: m.highlights ?? [],
+    entryType,
     archived: m.archived ?? false,
     endedAt: m.ended_at ?? undefined,
     isTicketed: m.is_ticketed ?? false,
-    ticketPrice: m.ticket_price ?? 0,
-    maxSpeakers: m.max_speakers ?? 3,
+    ticketPrice: Number(m.ticket_price ?? 0),
+    maxSpeakers: m.max_speakers ?? 5,
     sessionMode: mode,
   };
 }
@@ -1342,6 +1353,8 @@ export async function createMehfil(payload: Omit<Mehfil, "id" | "listeners" | "i
   const authId = getCurrentUserId();
   await ensureProfileExists(authId);
   const id = `m${uid()}`;
+  const entryType = payload.entryType ?? (payload.isTicketed ? "ticket" : "free");
+  const highlights = (payload.highlights ?? []).map((h) => h.trim()).filter(Boolean).slice(0, 3);
   const row = {
     id,
     host_id: payload.hostId,
@@ -1353,6 +1366,12 @@ export async function createMehfil(payload: Omit<Mehfil, "id" | "listeners" | "i
     cover_url: payload.coverUrl,
     language: payload.language,
     tags: payload.tags ?? [],
+    category: payload.category ?? null,
+    highlights,
+    entry_type: entryType,
+    is_ticketed: payload.isTicketed ?? entryType === "ticket",
+    ticket_price: payload.isTicketed || entryType === "ticket" ? (payload.ticketPrice ?? 0) : 0,
+    max_speakers: payload.maxSpeakers ?? 5,
     session_mode: payload.sessionMode ?? "voice",
   };
   console.log("[mk:createMehfil] inserting", { row, authId });

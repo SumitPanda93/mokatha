@@ -17,6 +17,8 @@ import {
   Lock,
   Pencil,
   Feather,
+  Ticket,
+  Users,
 } from "lucide-react";
 import {
   FEED_BG,
@@ -45,6 +47,9 @@ export const MEHFIL_TITLE_MAX = 60;
 export const MEHFIL_DESC_MAX = 250;
 export const MEHFIL_COVER_MAX_MB = 5;
 export const MEHFIL_HIGHLIGHT_SLOTS = 3;
+export const MEHFIL_MAX_SPEAKERS_DEFAULT = 5;
+export const MEHFIL_MAX_SPEAKERS_MIN = 1;
+export const MEHFIL_MAX_SPEAKERS_MAX = 20;
 
 export const CREATE_STEPS = ["Details", "Date & Time", "Settings", "Review"] as const;
 export type CreateMehfilStep = (typeof CREATE_STEPS)[number];
@@ -106,10 +111,12 @@ export function CreateMehfilShell({ children }: { children: React.ReactNode }) {
 export function CreateMehfilHeader({
   onBack,
   onSaveDraft,
+  onOpenDrafts,
   savingDraft,
 }: {
   onBack: () => void;
   onSaveDraft: () => void;
+  onOpenDrafts?: () => void;
   savingDraft?: boolean;
 }) {
   return (
@@ -123,15 +130,27 @@ export function CreateMehfilHeader({
       >
         <ChevronLeft size={18} style={{ color: FEED_TEXT }} />
       </button>
-      <button
-        type="button"
-        onClick={onSaveDraft}
-        disabled={savingDraft}
-        className="text-[13px] font-medium px-3 py-1.5 rounded-full disabled:opacity-50"
-        style={{ color: FEED_GOLD, border: `1px solid rgba(201,168,76,0.35)`, background: "rgba(201,168,76,0.08)" }}
-      >
-        {savingDraft ? "Saving…" : "Save Draft"}
-      </button>
+      <div className="flex items-center gap-2">
+        {onOpenDrafts && (
+          <button
+            type="button"
+            onClick={onOpenDrafts}
+            className="text-[13px] font-medium px-3 py-1.5 rounded-full"
+            style={{ color: FEED_MUTED, border: `1px solid ${FEED_BORDER}`, background: FEED_CARD }}
+          >
+            Drafts
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={onSaveDraft}
+          disabled={savingDraft}
+          className="text-[13px] font-medium px-3 py-1.5 rounded-full disabled:opacity-50"
+          style={{ color: FEED_GOLD, border: `1px solid rgba(201,168,76,0.35)`, background: "rgba(201,168,76,0.08)" }}
+        >
+          {savingDraft ? "Saving…" : "Save Draft"}
+        </button>
+      </div>
     </header>
   );
 }
@@ -371,42 +390,88 @@ export function CoverUploadArea({
 export function EntryTypeCards({
   value,
   onChange,
+  ticketPrice,
+  onTicketPriceChange,
 }: {
   value: MehfilEntryType;
   onChange: (v: MehfilEntryType) => void;
+  ticketPrice: number;
+  onTicketPriceChange: (v: number) => void;
 }) {
   const options: { id: MehfilEntryType; label: string; hint: string; icon: LucideIcon }[] = [
     { id: "free", label: "Entry Free", hint: "Open to everyone", icon: Gift },
     { id: "tip", label: "Tip Based", hint: "Support with a tip", icon: HandHeart },
   ];
   return (
-    <div className="grid grid-cols-2 gap-3">
-      {options.map(({ id, label, hint, icon: Icon }) => {
-        const selected = value === id;
-        return (
-          <button
-            key={id}
-            type="button"
-            onClick={() => onChange(id)}
-            className="rounded-2xl p-4 text-left transition-colors"
-            style={{
-              background: selected ? "rgba(201,168,76,0.10)" : FEED_CARD,
-              border: `1px solid ${selected ? "rgba(201,168,76,0.45)" : FEED_BORDER}`,
-            }}
-          >
-            <Icon
-              size={20}
-              className="mb-2"
-              style={{ color: selected ? FEED_GOLD : FEED_MUTED }}
-              strokeWidth={1.5}
-            />
-            <div className="text-[14px] font-medium mb-0.5">{label}</div>
-            <div className="text-[11px]" style={{ color: FEED_MUTED }}>
-              {hint}
-            </div>
-          </button>
-        );
-      })}
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 gap-3">
+        {options.map(({ id, label, hint, icon: Icon }) => {
+          const selected = value === id;
+          return (
+            <button
+              key={id}
+              type="button"
+              onClick={() => onChange(id)}
+              className="rounded-2xl p-4 text-left transition-colors"
+              style={{
+                background: selected ? "rgba(201,168,76,0.10)" : FEED_CARD,
+                border: `1px solid ${selected ? "rgba(201,168,76,0.45)" : FEED_BORDER}`,
+              }}
+            >
+              <Icon
+                size={20}
+                className="mb-2"
+                style={{ color: selected ? FEED_GOLD : FEED_MUTED }}
+                strokeWidth={1.5}
+              />
+              <div className="text-[14px] font-medium mb-0.5">{label}</div>
+              <div className="text-[11px]" style={{ color: FEED_MUTED }}>
+                {hint}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+      <button
+        type="button"
+        onClick={() => onChange("ticket")}
+        className="w-full rounded-2xl p-4 text-left transition-colors"
+        style={{
+          background: value === "ticket" ? "rgba(201,168,76,0.10)" : FEED_CARD,
+          border: `1px solid ${value === "ticket" ? "rgba(201,168,76,0.45)" : FEED_BORDER}`,
+        }}
+      >
+        <Ticket
+          size={20}
+          className="mb-2"
+          style={{ color: value === "ticket" ? FEED_GOLD : FEED_MUTED }}
+          strokeWidth={1.5}
+        />
+        <div className="text-[14px] font-medium mb-0.5">Paid Ticket</div>
+        <div className="text-[11px]" style={{ color: FEED_MUTED }}>
+          Set an entry price for listeners
+        </div>
+      </button>
+      {value === "ticket" && (
+        <div
+          className="rounded-2xl px-4 py-3 flex items-center gap-3"
+          style={{ background: FEED_CARD, border: `1px solid ${FEED_BORDER}` }}
+        >
+          <span className="text-[13px] shrink-0" style={{ color: FEED_MUTED }}>
+            Ticket price (₹)
+          </span>
+          <input
+            type="number"
+            min={1}
+            step={1}
+            value={ticketPrice || ""}
+            onChange={(e) => onTicketPriceChange(Math.max(0, Number(e.target.value) || 0))}
+            placeholder="e.g. 99"
+            className="flex-1 bg-transparent text-[15px] outline-none text-right"
+            style={{ color: FEED_TEXT }}
+          />
+        </div>
+      )}
     </div>
   );
 }
@@ -545,6 +610,8 @@ export function SettingsStep({
   onLanguageChange,
   selectedTags,
   onToggleTag,
+  maxSpeakers,
+  onMaxSpeakersChange,
 }: {
   sessionMode: "voice" | "studio";
   onSessionModeChange: (v: "voice" | "studio") => void;
@@ -552,6 +619,8 @@ export function SettingsStep({
   onLanguageChange: (v: "or" | "hi") => void;
   selectedTags: string[];
   onToggleTag: (tag: string) => void;
+  maxSpeakers: number;
+  onMaxSpeakersChange: (v: number) => void;
 }) {
   return (
     <div className="space-y-6">
@@ -579,6 +648,30 @@ export function SettingsStep({
         <p className="text-[11px] leading-relaxed px-0.5" style={{ color: FEED_MUTED }}>
           Studio opens optional camera — voice stays intimate without video.
         </p>
+      </FormSection>
+
+      <FormSection icon={Users} title="Max speakers">
+        <div
+          className="rounded-2xl px-4 py-3 flex items-center gap-3"
+          style={{ background: FEED_CARD, border: `1px solid ${FEED_BORDER}` }}
+        >
+          <input
+            type="number"
+            min={MEHFIL_MAX_SPEAKERS_MIN}
+            max={MEHFIL_MAX_SPEAKERS_MAX}
+            value={maxSpeakers}
+            onChange={(e) => {
+              const n = Number(e.target.value);
+              if (!Number.isFinite(n)) return;
+              onMaxSpeakersChange(Math.min(MEHFIL_MAX_SPEAKERS_MAX, Math.max(MEHFIL_MAX_SPEAKERS_MIN, n)));
+            }}
+            className="w-16 bg-transparent text-[15px] outline-none text-center font-medium"
+            style={{ color: FEED_TEXT }}
+          />
+          <span className="text-[12px] flex-1" style={{ color: FEED_MUTED }}>
+            Speakers can join the stage (1–{MEHFIL_MAX_SPEAKERS_MAX})
+          </span>
+        </div>
       </FormSection>
 
       <FormSection icon={Type} title="Language">
@@ -643,13 +736,21 @@ type ReviewProps = {
   category: MehfilCategoryId;
   coverPreview: string | null;
   entryType: MehfilEntryType;
+  ticketPrice: number;
   highlights: string[];
   startsNow: boolean;
   startsAt: string;
   sessionMode: "voice" | "studio";
   language: "or" | "hi";
   selectedTags: string[];
+  maxSpeakers: number;
 };
+
+function entryLabel(entryType: MehfilEntryType, ticketPrice: number): string {
+  if (entryType === "ticket") return `Paid ticket · ₹${ticketPrice || 0}`;
+  if (entryType === "tip") return "Tip based";
+  return "Entry free";
+}
 
 function ReviewRow({ label, value }: { label: string; value: string }) {
   return (
@@ -665,7 +766,7 @@ export function ReviewStep(props: ReviewProps) {
   const when = props.startsNow
     ? "Start now"
     : new Date(props.startsAt).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" });
-  const tags = [CATEGORY_TO_TAG[props.category], ...props.selectedTags].filter(Boolean).join(", ");
+  const tags = props.selectedTags.filter(Boolean).join(", ");
 
   return (
     <div className="space-y-4">
@@ -692,10 +793,11 @@ export function ReviewStep(props: ReviewProps) {
         </div>
         <div className="rounded-2xl px-4 mt-3" style={{ background: FEED_CARD, border: `1px solid ${FEED_BORDER}` }}>
           <ReviewRow label="Category" value={catLabel} />
-          <ReviewRow label="Entry" value={props.entryType === "free" ? "Entry free" : "Tip based"} />
+          <ReviewRow label="Entry" value={entryLabel(props.entryType, props.ticketPrice)} />
           <ReviewRow label="When" value={when} />
           <ReviewRow label="Mode" value={props.sessionMode === "voice" ? "Voice salon" : "Studio Mehfil"} />
           <ReviewRow label="Language" value={props.language === "or" ? "Odia" : "Hindi"} />
+          <ReviewRow label="Max speakers" value={String(props.maxSpeakers)} />
           {tags && <ReviewRow label="Tags" value={tags} />}
           {props.highlights.filter(Boolean).length > 0 && (
             <ReviewRow label="Highlights" value={props.highlights.filter(Boolean).join(" · ")} />
@@ -753,6 +855,8 @@ export function DetailsStep(props: {
   onCoverSelect: () => void;
   entryType: MehfilEntryType;
   onEntryTypeChange: (v: MehfilEntryType) => void;
+  ticketPrice: number;
+  onTicketPriceChange: (v: number) => void;
   highlights: string[];
   onHighlightsChange: (v: string[]) => void;
 }) {
@@ -792,7 +896,12 @@ export function DetailsStep(props: {
       </FormSection>
 
       <FormSection icon={Gift} title="Entry Type">
-        <EntryTypeCards value={props.entryType} onChange={props.onEntryTypeChange} />
+        <EntryTypeCards
+          value={props.entryType}
+          onChange={props.onEntryTypeChange}
+          ticketPrice={props.ticketPrice}
+          onTicketPriceChange={props.onTicketPriceChange}
+        />
       </FormSection>
 
       <FormSection icon={Plus} title="Short Highlights (Optional)">
